@@ -1,0 +1,29 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(if [ -f .env ])",
+      "Bash(then echo \"=== .env 파일 존재 ===\")",
+      "Bash(cat:*)",
+      "Bash(else echo \"⚠️  .env 파일이 없습니다!\")",
+      "Bash(fi)",
+      "Bash(python:*)",
+      "Bash(codex exec:*)",
+      "Bash(\"Phoenix Trading System의 테스트 코드 신뢰성을 종합적으로 리뷰해주세요.\n\n분석 대상:\n- tests/ 폴더의 모든 pytest 테스트\n- test_*.py 단위 테스트 스크립트\n- tests/conftest.py fixture 설정\n\n리뷰 항목:\n1. **테스트 커버리지 분석**\n   - 핵심 비즈니스 로직(GridEngine, ExcelBridge, KisRestAdapter)이 충분히 테스트되는가?\n   - Edge case 처리가 누락된 부분은?\n   \n2. **Mock 신뢰성**\n   - KisRestAdapter Mock이 실제 REST API 동작을 정확히 시뮬레이션하는가?\n   - Mock 응답이 실제 API 스펙과 일치하는가?\n   \n3. **통합 테스트 품질**\n   - test_integration.py의 시나리오가 실제 운영 환경을 반영하는가?\n   - 동시성(concurrency) 테스트가 충분한가?\n   \n4. **에러 케이스**\n   - 네트워크 실패, Excel lock, API 타임아웃 등 실패 시나리오가 커버되는가?\n   - 복구 로직(retry, rollback)이 검증되는가?\n   \n5. **위험 요소**\n   - 테스트에서 놓칠 수 있는 실거래 위험은?\n   - False positive(통과했지만 실제론 문제)를 유발할 수 있는 부분은?\n\n최종 판단:\n- 이 테스트 스위트로 실거래 전 배포 결정을 내릴 수 있는가?\n- 개선이 필요한 우선순위 TOP 5는?\n\n상세한 코드 예시와 함께 리포트를 작성해주세요.\")",
+      "Bash(cd:*)",
+      "Bash(echo:*)",
+      "Bash(git rev-parse:*)",
+      "WebSearch",
+      "WebFetch(domain:openapi.kiwoom.com)",
+      "WebFetch(domain:apiportal.koreainvestment.com)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:download.kiwoom.com)",
+      "Bash(mv:*)",
+      "Bash(ls:*)",
+      "Bash(git init:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
