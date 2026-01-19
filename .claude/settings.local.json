@@ -21,7 +21,10 @@
       "WebFetch(domain:download.kiwoom.com)",
       "Bash(mv:*)",
       "Bash(ls:*)",
-      "Bash(git init:*)"
+      "Bash(git init:*)",
+      "Bash(git remote add:*)",
+      "Bash(git branch:*)",
+      "Bash(git push:*)"
     ],
     "deny": [],
     "ask": []
