@@ -3,7 +3,7 @@ Phoenix Grid System - 데이터 모델
 """
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Tuple
 
 
 @dataclass(frozen=True)
@@ -48,10 +48,11 @@ class Position:
 class TradeSignal:
     """매매 신호 (불변)"""
     action: str                  # "BUY" 또는 "SELL"
-    tier: int                    # 거래 대상 티어
+    tier: int                    # 거래 대상 티어 (배치 시 대표 티어)
     price: float                 # 거래 예상 가격 (USD)
     quantity: int                # 거래 수량 (주)
     reason: str                  # 거래 사유
+    tiers: Optional[Tuple[int, ...]] = None  # 배치 주문 시 포함된 티어들
     timestamp: datetime = None   # 신호 생성 시각
 
     def __post_init__(self):

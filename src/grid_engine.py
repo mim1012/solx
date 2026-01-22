@@ -276,15 +276,15 @@ class GridEngine:
         actual_filled_qty: Optional[int] = None
     ) -> Position:
         """
-        매수 실행 (실제 체결가/수량 반영)
+        매수 실행 (실제 체결가/수량 반영) - 배치 주문 지원
 
         Args:
-            signal: 매수 신호
+            signal: 매수 신호 (signal.tiers가 있으면 배치 주문)
             actual_filled_price: 실제 체결가 (None이면 signal.price 사용)
             actual_filled_qty: 실제 체결 수량 (None이면 signal.quantity 사용)
 
         Returns:
-            생성된 포지션
+            생성된 포지션 (배치 시 대표 티어 포지션 반환)
         """
         # 실제 체결가/수량 사용 (없으면 signal 값 사용)
         filled_price = actual_filled_price if actual_filled_price is not None else signal.price
@@ -308,28 +308,60 @@ class GridEngine:
 
         self.account_balance -= invested
 
-        # 포지션 생성 (실제 체결가/수량 사용)
-        position = Position(
-            tier=signal.tier,
-            quantity=filled_qty,
-            avg_price=filled_price,
-            invested_amount=invested,
-            opened_at=datetime.now()
-        )
+        # [NEW] 배치 주문 처리
+        if signal.tiers and len(signal.tiers) > 1:
+            # 배치: 각 티어에 동일 수량 분배
+            qty_per_tier = filled_qty // len(signal.tiers)
+            remainder = filled_qty % len(signal.tiers)
 
-        self.positions.append(position)
+            created_positions = []
+            for i, tier in enumerate(signal.tiers):
+                # 나머지 수량은 첫 번째 티어에 추가
+                tier_qty = qty_per_tier + (remainder if i == 0 else 0)
+                tier_invested = filled_price * tier_qty
 
-        # 로그에 실제 체결 정보 포함
-        if actual_filled_price is not None or actual_filled_qty is not None:
+                position = Position(
+                    tier=tier,
+                    quantity=tier_qty,
+                    avg_price=filled_price,
+                    invested_amount=tier_invested,
+                    opened_at=datetime.now()
+                )
+                self.positions.append(position)
+                created_positions.append(position)
+
+            # 로그
             logger.info(
-                f"매수 체결: Tier {signal.tier} - "
-                f"주문 {signal.quantity}주 @ ${signal.price:.2f}, "
-                f"실제 체결 {filled_qty}주 @ ${filled_price:.2f}"
+                f"배치 매수 체결: Tiers {signal.tiers}, "
+                f"총 {filled_qty}주 @ ${filled_price:.2f}, "
+                f"티어당 {qty_per_tier}주 분배"
             )
-        else:
-            logger.info(f"매수 체결: Tier {signal.tier}, {filled_qty}주 @ ${filled_price:.2f}")
 
-        return position
+            return created_positions[0]  # 대표 티어 반환
+
+        else:
+            # 단일 티어 처리 (기존 로직)
+            position = Position(
+                tier=signal.tier,
+                quantity=filled_qty,
+                avg_price=filled_price,
+                invested_amount=invested,
+                opened_at=datetime.now()
+            )
+
+            self.positions.append(position)
+
+            # 로그에 실제 체결 정보 포함
+            if actual_filled_price is not None or actual_filled_qty is not None:
+                logger.info(
+                    f"매수 체결: Tier {signal.tier} - "
+                    f"주문 {signal.quantity}주 @ ${signal.price:.2f}, "
+                    f"실제 체결 {filled_qty}주 @ ${filled_price:.2f}"
+                )
+            else:
+                logger.info(f"매수 체결: Tier {signal.tier}, {filled_qty}주 @ ${filled_price:.2f}")
+
+            return position
 
     def execute_sell(
         self,
@@ -338,10 +370,10 @@ class GridEngine:
         actual_filled_qty: Optional[int] = None
     ) -> float:
         """
-        매도 실행 (실제 체결가/수량 반영)
+        매도 실행 (실제 체결가/수량 반영) - 배치 주문 지원
 
         Args:
-            signal: 매도 신호
+            signal: 매도 신호 (signal.tiers가 있으면 배치 주문)
             actual_filled_price: 실제 체결가 (None이면 signal.price 사용)
             actual_filled_qty: 실제 체결 수량 (None이면 signal.quantity 사용)
 
@@ -361,63 +393,101 @@ class GridEngine:
             )
             return 0.0  # 수익 0
 
-        # 해당 티어 포지션 찾기
-        position = next((p for p in self.positions if p.tier == signal.tier), None)
-        if not position:
-            raise ValueError(f"Tier {signal.tier} 포지션을 찾을 수 없음")
+        # [NEW] 배치 주문 처리
+        if signal.tiers and len(signal.tiers) > 1:
+            total_profit = 0.0
+            total_invested = 0.0
+            total_sold_qty = 0
 
-        # 매도 금액 계산 (실제 체결가 사용)
-        sell_amount = filled_price * filled_qty
+            # 각 티어 포지션 제거
+            for tier in signal.tiers:
+                position = next((p for p in self.positions if p.tier == tier), None)
+                if not position:
+                    logger.warning(f"Tier {tier} 포지션을 찾을 수 없음 (배치 매도 중)")
+                    continue
 
-        # 잔고 증가
-        self.account_balance += sell_amount
+                # 포지션 제거
+                self.positions.remove(position)
+                total_invested += position.invested_amount
+                total_sold_qty += position.quantity
 
-        # 포지션 업데이트 또는 제거
-        if filled_qty >= position.quantity:
-            # 전체 매도 (또는 초과) - 포지션 제거
-            self.positions.remove(position)
-            profit = sell_amount - position.invested_amount
+            # 매도 금액 계산
+            sell_amount = filled_price * filled_qty
 
-            # 로그에 실제 체결 정보 포함
-            if actual_filled_price is not None or actual_filled_qty is not None:
-                logger.info(
-                    f"매도 체결 (전체): Tier {signal.tier} - "
-                    f"주문 {signal.quantity}주 @ ${signal.price:.2f}, "
-                    f"실제 체결 {filled_qty}주 @ ${filled_price:.2f}, "
-                    f"수익: ${profit:.2f}"
-                )
-            else:
-                logger.info(f"매도 체결 (전체): Tier {signal.tier}, {filled_qty}주 @ ${filled_price:.2f}, 수익: ${profit:.2f}")
-        else:
-            # 부분 매도 - 포지션 업데이트
-            invested_per_share = position.invested_amount / position.quantity
-            sold_invested = invested_per_share * filled_qty
+            # 잔고 증가
+            self.account_balance += sell_amount
 
-            remaining_quantity = position.quantity - filled_qty
-            remaining_invested = position.invested_amount - sold_invested
+            # 수익 계산
+            total_profit = sell_amount - total_invested
 
-            # frozen dataclass이므로 replace 사용
-            updated_position = replace(
-                position,
-                quantity=remaining_quantity,
-                invested_amount=remaining_invested
+            # 로그
+            logger.info(
+                f"배치 매도 체결: Tiers {signal.tiers}, "
+                f"총 {filled_qty}주 @ ${filled_price:.2f}, "
+                f"수익: ${total_profit:.2f}"
             )
 
-            idx = self.positions.index(position)
-            self.positions[idx] = updated_position
+            return total_profit
 
-            profit = sell_amount - sold_invested
+        else:
+            # 단일 티어 처리 (기존 로직)
+            # 해당 티어 포지션 찾기
+            position = next((p for p in self.positions if p.tier == signal.tier), None)
+            if not position:
+                raise ValueError(f"Tier {signal.tier} 포지션을 찾을 수 없음")
 
-            # 로그에 실제 체결 정보 포함
-            if actual_filled_price is not None or actual_filled_qty is not None:
-                logger.info(
-                    f"매도 체결 (부분): Tier {signal.tier} - "
-                    f"주문 {signal.quantity}주 @ ${signal.price:.2f}, "
-                    f"실제 체결 {filled_qty}주 @ ${filled_price:.2f}, "
-                    f"수익: ${profit:.2f}, 남은 수량: {remaining_quantity}주"
-                )
+            # 매도 금액 계산 (실제 체결가 사용)
+            sell_amount = filled_price * filled_qty
+
+            # 잔고 증가
+            self.account_balance += sell_amount
+
+            # 포지션 업데이트 또는 제거
+            if filled_qty >= position.quantity:
+                # 전체 매도 (또는 초과) - 포지션 제거
+                self.positions.remove(position)
+                profit = sell_amount - position.invested_amount
+
+                # 로그에 실제 체결 정보 포함
+                if actual_filled_price is not None or actual_filled_qty is not None:
+                    logger.info(
+                        f"매도 체결 (전체): Tier {signal.tier} - "
+                        f"주문 {signal.quantity}주 @ ${signal.price:.2f}, "
+                        f"실제 체결 {filled_qty}주 @ ${filled_price:.2f}, "
+                        f"수익: ${profit:.2f}"
+                    )
+                else:
+                    logger.info(f"매도 체결 (전체): Tier {signal.tier}, {filled_qty}주 @ ${filled_price:.2f}, 수익: ${profit:.2f}")
             else:
-                logger.info(f"매도 체결 (부분): Tier {signal.tier}, {filled_qty}주 @ ${filled_price:.2f}, 수익: ${profit:.2f}, 남은 수량: {remaining_quantity}주")
+                # 부분 매도 - 포지션 업데이트
+                invested_per_share = position.invested_amount / position.quantity
+                sold_invested = invested_per_share * filled_qty
+
+                remaining_quantity = position.quantity - filled_qty
+                remaining_invested = position.invested_amount - sold_invested
+
+                # frozen dataclass이므로 replace 사용
+                updated_position = replace(
+                    position,
+                    quantity=remaining_quantity,
+                    invested_amount=remaining_invested
+                )
+
+                idx = self.positions.index(position)
+                self.positions[idx] = updated_position
+
+                profit = sell_amount - sold_invested
+
+                # 로그에 실제 체결 정보 포함
+                if actual_filled_price is not None or actual_filled_qty is not None:
+                    logger.info(
+                        f"매도 체결 (부분): Tier {signal.tier} - "
+                        f"주문 {signal.quantity}주 @ ${signal.price:.2f}, "
+                        f"실제 체결 {filled_qty}주 @ ${filled_price:.2f}, "
+                        f"수익: ${profit:.2f}, 남은 수량: {remaining_quantity}주"
+                    )
+                else:
+                    logger.info(f"매도 체결 (부분): Tier {signal.tier}, {filled_qty}주 @ ${filled_price:.2f}, 수익: ${profit:.2f}, 남은 수량: {remaining_quantity}주")
 
         return profit  # 실현 수익 반환 (기존과 다름: sell_amount가 아닌 profit 반환)
 
@@ -466,81 +536,96 @@ class GridEngine:
 
     def process_tick(self, current_price: float) -> List[TradeSignal]:
         """
-        시세 틱 처리 (메인 루프)
+        시세 틱 처리 (메인 루프) - 배치 주문 방식
+
+        현재가 1개를 조회하여:
+        1. 매도 가능한 모든 티어를 찾아 수량 합산 → 1번 주문
+        2. 매수 가능한 모든 티어를 찾아 수량 합산 → 1번 주문
 
         Args:
             current_price: 현재가 (USD)
 
         Returns:
-            생성된 거래 신호 리스트
+            생성된 거래 신호 리스트 (최대 2개: 매도 1개, 매수 1개)
         """
         signals = []
-        MAX_SELL_PER_TICK = 5  # 한 틱당 최대 5개 매도 (플래시 크래시 대응)
-        MAX_BUY_PER_TICK = 5   # 한 틱당 최대 5개 매수 (급락 대응)
 
         # 1. Tier 1 갱신 확인
         self.update_tier1(current_price)
 
-        # 2. 매도 조건 확인 (우선순위 높음, 최대 5개)
-        # [FIX #2] Limit 스위치 체크
-        if self.settings.sell_limit:
-            logger.debug("매도 제한 활성화됨 - 매도 신호 생성 중단")
-        else:
-            sell_count = 0
-            for pos in sorted(self.positions, key=lambda p: p.tier, reverse=True):
-                if sell_count >= MAX_SELL_PER_TICK:
-                    break
+        # 2. 매도 조건 확인 (배치)
+        if not self.settings.sell_limit:
+            sell_batch = []  # (tier, quantity, avg_price) 튜플 리스트
 
+            for pos in sorted(self.positions, key=lambda p: p.tier, reverse=True):
                 # 티어 지정 가격 기준으로 매도가 계산
                 tier_buy_price = self.calculate_tier_price(pos.tier)
                 tier_sell_price = tier_buy_price * (1 + self.settings.sell_target)
 
                 if current_price >= tier_sell_price:
-                    signal = self.generate_sell_signal(current_price, pos.tier)
-                    signals.append(signal)
-                    sell_count += 1
+                    sell_batch.append((pos.tier, pos.quantity, pos.avg_price))
                     actual_profit_rate = (current_price - pos.avg_price) / pos.avg_price
-                    logger.info(f"매도 신호 생성: Tier {pos.tier}, 티어매도가 ${tier_sell_price:.2f} (실제수익률: {actual_profit_rate:.2%})")
+                    logger.debug(f"매도 배치 추가: Tier {pos.tier}, {pos.quantity}주 (실제수익률: {actual_profit_rate:.2%})")
 
-        # 3. 매수 조건 확인 (최대 5개)
-        # [FIX #2] Limit 스위치 체크
-        if self.settings.buy_limit:
-            logger.debug("매수 제한 활성화됨 - 매수 신호 생성 중단")
-        else:
+            # 매도 배치 신호 생성
+            if sell_batch:
+                total_qty = sum(qty for _, qty, _ in sell_batch)
+                tiers = tuple(tier for tier, _, _ in sell_batch)
+
+                # 실제 평균 수익률 계산 (로깅용)
+                weighted_avg_price = sum(qty * avg_price for _, qty, avg_price in sell_batch) / total_qty
+                avg_profit_rate = (current_price - weighted_avg_price) / weighted_avg_price
+
+                signal = TradeSignal(
+                    action="SELL",
+                    tier=tiers[0],  # 대표 티어 (가장 높은 티어)
+                    tiers=tiers,
+                    price=current_price,
+                    quantity=total_qty,
+                    reason=f"배치 매도 {len(tiers)}개 티어 (평균수익률: {avg_profit_rate:.2%})"
+                )
+                signals.append(signal)
+                logger.info(f"[BATCH SELL] {len(tiers)}개 티어, 총 {total_qty}주 @ ${current_price:.2f}")
+
+        # 3. 매수 조건 확인 (배치)
+        if not self.settings.buy_limit:
+            buy_batch = []  # (tier, quantity) 튜플 리스트
             start_tier = 1 if self.settings.tier1_trading_enabled else 2
-            buy_count = 0
 
             for tier in range(start_tier, self.settings.total_tiers + 1):
-                if buy_count >= MAX_BUY_PER_TICK:
-                    break
-
                 # 이미 보유 중인 티어는 제외
                 if any(pos.tier == tier for pos in self.positions):
                     continue
 
-                # [FIX #9] 잔고 확인 추가
-                # 이미 생성된 매수 신호들의 누적 비용 계산
-                accumulated_cost = sum(s.quantity * s.price for s in signals if s.action == "BUY")
-                remaining_balance = self.account_balance - accumulated_cost
-
-                # 현재 매수 신호 비용 계산
+                # 티어 매수 조건 확인
                 tier_price = self.calculate_tier_price(tier)
                 if current_price <= tier_price:
-                    signal = self.generate_buy_signal(current_price, tier)
-                    if signal:  # None이 아닌 경우만
-                        # 신호 비용
-                        signal_cost = signal.quantity * signal.price
+                    # 매수 수량 계산
+                    raw_qty = self.settings.tier_amount / current_price
+                    quantity = max(1, floor(raw_qty))
 
-                        # 잔고 확인
-                        if remaining_balance < signal_cost:
-                            logger.warning(
-                                f"잔고 부족으로 매수 중단: "
-                                f"필요=${signal_cost:.2f}, 잔고=${remaining_balance:.2f}"
-                            )
-                            break  # 잔고 부족 시 추가 매수 중단
+                    buy_batch.append((tier, quantity))
+                    logger.debug(f"매수 배치 추가: Tier {tier}, {quantity}주")
 
-                        signals.append(signal)
-                        buy_count += 1
-                        logger.info(f"매수 신호 생성: Tier {tier}, 기준가 ${tier_price:.2f}")
+            # 매수 배치 신호 생성 (잔고 확인 포함)
+            if buy_batch:
+                total_qty = sum(qty for _, qty in buy_batch)
+                total_cost = total_qty * current_price
+
+                if self.account_balance >= total_cost:
+                    tiers = tuple(tier for tier, _ in buy_batch)
+
+                    signal = TradeSignal(
+                        action="BUY",
+                        tier=tiers[0],  # 대표 티어 (가장 낮은 티어)
+                        tiers=tiers,
+                        price=current_price,
+                        quantity=total_qty,
+                        reason=f"배치 매수 {len(tiers)}개 티어"
+                    )
+                    signals.append(signal)
+                    logger.info(f"[BATCH BUY] {len(tiers)}개 티어, 총 {total_qty}주 @ ${current_price:.2f} (비용: ${total_cost:.2f})")
+                else:
+                    logger.warning(f"잔고 부족으로 배치 매수 중단: 필요=${total_cost:.2f}, 잔고=${self.account_balance:.2f}")
 
         return signals

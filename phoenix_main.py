@@ -297,10 +297,13 @@ class PhoenixTradingSystem:
         return 0
 
     def _process_signal(self, signal):
-        """매매 신호 처리"""
+        """매매 신호 처리 (배치 주문 지원)"""
         try:
             if signal.action == "BUY":
-                logger.info(f"[BUY] 매수 신호: Tier {signal.tier}, {signal.quantity}주 @ ${signal.price:.2f}")
+                if signal.tiers:
+                    logger.info(f"[BATCH BUY] 배치 매수 신호: Tiers {signal.tiers}, 총 {signal.quantity}주 @ ${signal.price:.2f}")
+                else:
+                    logger.info(f"[BUY] 매수 신호: Tier {signal.tier}, {signal.quantity}주 @ ${signal.price:.2f}")
 
                 # 매수 주문 (지정가 - 현재가 이하 보장)
                 result = self.kis_adapter.send_order(
@@ -353,7 +356,10 @@ class PhoenixTradingSystem:
                     logger.error(f"[FAIL] 매수 주문 실패: Tier {signal.tier} - {result['message']}")
 
             elif signal.action == "SELL":
-                logger.info(f"[SELL] 매도 신호: Tier {signal.tier}, {signal.quantity}주 @ ${signal.price:.2f}")
+                if signal.tiers:
+                    logger.info(f"[BATCH SELL] 배치 매도 신호: Tiers {signal.tiers}, 총 {signal.quantity}주 @ ${signal.price:.2f}")
+                else:
+                    logger.info(f"[SELL] 매도 신호: Tier {signal.tier}, {signal.quantity}주 @ ${signal.price:.2f}")
 
                 # 매도 주문 (지정가 - 현재가 이상 보장)
                 result = self.kis_adapter.send_order(
