@@ -509,11 +509,15 @@ class TestKisRestAdapter:
         }
         mock_post.return_value = mock_response
 
-        # 주문 실행 (호환성 메서드)
-        result = adapter.send_order("BUY", "SOXL", 20, 45.5)
+        # 주문 실행 (키워드 인자 사용)
+        result = adapter.send_order(side="BUY", ticker="SOXL", quantity=20, price=45.5)
 
-        # 검증
-        assert result is True  # 호환성 메서드는 bool 반환
+        # 검증 (dict 반환값)
+        assert isinstance(result, dict)
+        assert result["status"] == "SUCCESS"
+        assert result["order_id"] == "ORDER999999"
+        assert result["message"] == "주문 접수 완료"
+        assert result["filled_qty"] == 20  # 주문 수량과 동일 (응답에 TOT_CCLD_QTY 없으면 quantity 사용)
 
     def test_account_list_property(self, adapter):
         """account_list 속성 테스트"""

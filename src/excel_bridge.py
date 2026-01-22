@@ -206,6 +206,7 @@ class ExcelBridge:
         telegram_enabled = self._read_bool(self.ws_master["B20"])
 
         # 시스템 설정
+        price_check_interval = float(self.ws_master["B16"].value or 40.0)  # 시세 조회 주기 (초)
         excel_update_interval = float(self.ws_master["B21"].value or 1.0)
 
         # [CUSTOM v3.1] Tier 1 매수% 읽기 (영역 C, 행 18, 컬럼 C)
@@ -240,6 +241,7 @@ class ExcelBridge:
             telegram_token=telegram_token,
             telegram_enabled=telegram_enabled,
             excel_update_interval=excel_update_interval,
+            price_check_interval=price_check_interval,
             # 그리드 파라미터 추가
             seed_ratio=seed_ratio,
             buy_interval=buy_interval,

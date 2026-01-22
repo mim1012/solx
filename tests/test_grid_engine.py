@@ -264,7 +264,7 @@ class TestOrderExecution:
 
         # 잔고 증가 확인
         assert engine.account_balance == initial_balance + 101.0
-        assert profit == 101.0  # 매도 수익금
+        assert profit == 1.0  # 실현 수익 (매도가 101.0 - 매수가 100.0 = 1.0)
         assert len(engine.positions) == 0  # 포지션 제거 (전체 청산)
 
     def test_execute_partial_sell(self, grid_settings_tier1_enabled):
@@ -286,7 +286,7 @@ class TestOrderExecution:
         profit = engine.execute_sell(sell_signal)
 
         # 10주 남음 (포지션은 engine.positions에서 확인)
-        assert profit == 101.0  # 10주 매도 수익금
+        assert profit == 1.0  # 10주 매도 실현 수익 (매도가 101.0 - 매수가 100.0 = 1.0)
         assert len(engine.positions) == 1
         remaining_position = engine.positions[0]
         assert remaining_position.quantity == 10

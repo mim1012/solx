@@ -42,6 +42,9 @@ class OrderResult:
     order_no: str
     status: str  # "success", "failed"
     message: str = ""
+    filled_price: float = 0.0  # 체결가 (USD)
+    filled_qty: int = 0        # 체결 수량
+    total_qty: int = 0         # 주문 총 수량
 
 
 class AuthenticationError(Exception):
@@ -112,6 +115,39 @@ class KisRestAdapter:
         self.request_interval = 0.2  # 초당 5회 (200ms 간격)
 
         logger.info("KisRestAdapter 초기화 완료 (한국투자증권 REST API)")
+
+    def _parse_account_no(self, raw_account: str) -> tuple[str, str]:
+        """
+        계좌번호 파싱 (KIS REST API 사양)
+
+        Args:
+            raw_account: 원본 계좌번호 (예: "12345678-01" 또는 "1234567801")
+
+        Returns:
+            tuple: (CANO, ACNT_PRDT_CD)
+                - CANO: 계좌번호 8자리
+                - ACNT_PRDT_CD: 계좌상품코드 2자리
+
+        Raises:
+            ValueError: 계좌번호 형식이 잘못된 경우
+        """
+        if not raw_account:
+            raise ValueError("계좌번호가 비어 있습니다")
+
+        # 하이픈, 공백 제거
+        raw_account = raw_account.strip().replace("-", "").replace(" ", "")
+
+        # 최소 10자리 필요 (계좌번호 8 + 상품코드 2)
+        if len(raw_account) < 10:
+            raise ValueError(f"계좌번호가 너무 짧습니다: {raw_account} (최소 10자리 필요)")
+
+        # CANO (앞 8자리), ACNT_PRDT_CD (다음 2자리)
+        cano = raw_account[:8]
+        acnt_prdt_cd = raw_account[8:10]
+
+        logger.debug(f"계좌번호 파싱: {raw_account[:4]}****{raw_account[-2:]} → CANO={cano[:4]}****, ACNT_PRDT_CD={acnt_prdt_cd}")
+
+        return cano, acnt_prdt_cd
 
     # =====================================
     # 1. 인증 (OAuth2 + Approval Key)
@@ -384,15 +420,18 @@ class KisRestAdapter:
 
             ord_dvsn = ord_dvsn_map.get(order_type, {}).get(order_kind, "00")
 
+            # 계좌번호 파싱 (CANO, ACNT_PRDT_CD 분리)
+            cano, acnt_prdt_cd = self._parse_account_no(self.account_no)
+
             payload = {
-                "CANO": self.account_no,           # 계좌번호
-                "ACNT_PRDT_CD": "01",              # 계좌상품코드
-                "OVRS_EXCG_CD": "NASD",            # 거래소코드 (나스닥)
-                "PDNO": ticker,                     # 종목코드
-                "ORD_QTY": str(quantity),           # 주문수량
+                "CANO": cano,                       # 계좌번호 (8자리)
+                "ACNT_PRDT_CD": acnt_prdt_cd,       # 계좌상품코드 (2자리)
+                "OVRS_EXCG_CD": "NASD",             # 거래소코드 (나스닥)
+                "PDNO": ticker,                      # 종목코드
+                "ORD_QTY": str(quantity),            # 주문수량
                 "OVRS_ORD_UNPR": str(price) if order_kind == "limit" else "0",  # 주문단가
-                "ORD_SVR_DVSN_CD": "0",            # 주문서버구분코드
-                "ORD_DVSN": ord_dvsn               # 주문구분
+                "ORD_SVR_DVSN_CD": "0",             # 주문서버구분코드
+                "ORD_DVSN": ord_dvsn                # 주문구분
             }
 
             # Hashkey 생성
@@ -419,12 +458,24 @@ class KisRestAdapter:
                     output = data.get("output", {})
                     order_no = output.get("ODNO", "")
 
-                    logger.info(f"주문 성공: {order_type} {ticker} {quantity}주 @ ${price} (주문번호: {order_no})")
+                    # 체결 정보 추출 (KIS REST API 응답 필드)
+                    filled_price = float(output.get("AVG_PRVS", price or 0))  # 평균 체결가 (없으면 주문가 사용)
+                    filled_qty = int(output.get("TOT_CCLD_QTY", quantity))     # 총 체결 수량 (없으면 주문 수량 사용)
+
+                    logger.info(
+                        f"주문 성공: {order_type} {ticker} - "
+                        f"주문 {quantity}주 @ ${price}, "
+                        f"체결 {filled_qty}주 @ ${filled_price:.2f} "
+                        f"(주문번호: {order_no})"
+                    )
 
                     return OrderResult(
                         order_no=order_no,
                         status="success",
-                        message=data.get("msg1", "")
+                        message=data.get("msg1", ""),
+                        filled_price=filled_price,
+                        filled_qty=filled_qty,
+                        total_qty=quantity
                     )
                 else:
                     error_msg = data.get("msg1", "Unknown error")
@@ -433,7 +484,10 @@ class KisRestAdapter:
                     return OrderResult(
                         order_no="",
                         status="failed",
-                        message=error_msg
+                        message=error_msg,
+                        filled_price=0.0,
+                        filled_qty=0,
+                        total_qty=quantity
                     )
             else:
                 logger.error(f"주문 HTTP 오류: {response.status_code} - {response.text}")
@@ -758,29 +812,175 @@ class KisRestAdapter:
 
     def send_order(
         self,
-        order_type: str,
-        ticker: str,
-        quantity: int,
-        price: float
-    ) -> bool:
+        side: str = None,      # phoenix_main.py에서 side="BUY" 형태로 호출
+        order_type: str = None,  # 호환성 유지 (side 우선)
+        ticker: str = "",
+        quantity: int = 0,
+        price: float = 0
+    ) -> dict:
         """
-        주문 실행 (호환성 메서드)
+        주문 실행 (통합 메서드)
 
         Args:
-            order_type: "BUY" 또는 "SELL"
+            side: "BUY" 또는 "SELL" (권장)
+            order_type: "BUY" 또는 "SELL" (호환성, side 우선)
             ticker: 종목코드
             quantity: 수량
             price: 가격 (0이면 시장가)
 
         Returns:
-            bool: 성공 여부
+            dict: {
+                "status": "SUCCESS" | "FAILED",
+                "order_id": "주문번호",
+                "filled_price": 체결가 (float),
+                "filled_qty": 체결 수량 (int),
+                "message": "상세 메시지"
+            }
         """
-        order_kind = "market" if price == 0 else "limit"
-        result = self._send_order_internal(ticker, order_type.lower(), quantity, price, order_kind)
+        # side 우선, 없으면 order_type 사용
+        order_direction = (side or order_type or "").upper()
 
+        if order_direction not in ["BUY", "SELL"]:
+            return {
+                "status": "FAILED",
+                "order_id": "",
+                "filled_price": 0.0,
+                "filled_qty": 0,
+                "message": f"Invalid order direction: {order_direction}. Must be 'BUY' or 'SELL'"
+            }
+
+        order_kind = "market" if price == 0 else "limit"
+        result = self._send_order_internal(ticker, order_direction.lower(), quantity, price, order_kind)
+
+        # OrderResult를 dict로 변환
         if result:
-            return result.status == "success"
-        return False
+            return {
+                "status": "SUCCESS" if result.status == "success" else "FAILED",
+                "order_id": result.order_no,
+                "filled_price": result.filled_price,
+                "filled_qty": result.filled_qty,
+                "message": result.message
+            }
+        else:
+            return {
+                "status": "FAILED",
+                "order_id": "",
+                "filled_price": 0.0,
+                "filled_qty": 0,
+                "message": "Order failed (internal error)"
+            }
+
+    def get_order_fill_status(self, order_no: str, order_date: str = None) -> dict:
+        """
+        주문 체결 상태 조회 (v1_해외주식-007)
+
+        Args:
+            order_no: 주문번호 (ODNO)
+            order_date: 주문일자 YYYYMMDD (None이면 오늘)
+
+        Returns:
+            dict: {
+                "status": "완료" | "접수" | "거부",
+                "filled_qty": 체결 수량 (int),
+                "filled_price": 체결 단가 (float),
+                "unfilled_qty": 미체결 수량 (int),
+                "reject_reason": 거부 사유 (str)
+            }
+        """
+        if not order_date:
+            from datetime import datetime
+            order_date = datetime.now().strftime("%Y%m%d")
+
+        # 모의투자 여부 확인 (app_key 길이로 판단, 실전=36자, 모의=다를 수 있음)
+        is_mock = len(self.app_key) != 36
+        base_url = "https://openapivts.koreainvestment.com:29443" if is_mock else self.BASE_URL
+
+        url = f"{base_url}/uapi/overseas-stock/v1/trading/inquire-ccnl"
+
+        # 계좌번호 파싱
+        cano, acnt_prdt_cd = self._parse_account_no(self.account_no)
+
+        # 요청 파라미터
+        params = {
+            "CANO": cano,
+            "ACNT_PRDT_CD": acnt_prdt_cd,
+            "PDNO": "%",  # 전체 종목
+            "ORD_STRT_DT": order_date,
+            "ORD_END_DT": order_date,
+            "SLL_BUY_DVSN": "00",  # 전체 (매도/매수)
+            "CCLD_NCCS_DVSN": "00",  # 전체 (체결/미체결)
+            "OVRS_EXCG_CD": "NASD",  # 미국 전체
+            "SORT_SQN": "DS",  # 내림차순
+            "ORD_DT": "",
+            "ORD_GNO_BRNO": "",
+            "ODNO": order_no,  # [FIX] 주문번호 직접 전달
+            "CTX_AREA_NK200": "",
+            "CTX_AREA_FK200": ""
+        }
+
+        headers = self._get_headers(
+            tr_id="TTTS3035R" if not is_mock else "VTTS3035R",
+            custtype="P"
+        )
+
+        try:
+            # [FIX] Rate limit 보호
+            self._apply_rate_limit()
+
+            response = requests.get(url, headers=headers, params=params, timeout=10)
+            response.raise_for_status()
+
+            data = response.json()
+
+            if data.get("rt_cd") == "0":
+                output_list = data.get("output", [])
+
+                # 주문번호로 필터링
+                for item in output_list:
+                    if item.get("odno") == order_no:
+                        status = item.get("prcs_stat_name", "")
+                        filled_qty = int(item.get("ft_ccld_qty", "0"))
+                        filled_price = float(item.get("ft_ccld_unpr3", "0"))
+                        unfilled_qty = int(item.get("nccs_qty", "0"))
+                        reject_reason = item.get("rjct_rson_name", "")
+
+                        return {
+                            "status": status,
+                            "filled_qty": filled_qty,
+                            "filled_price": filled_price,
+                            "unfilled_qty": unfilled_qty,
+                            "reject_reason": reject_reason
+                        }
+
+                # 주문번호 못 찾음
+                logger.warning(f"주문번호 {order_no}를 찾을 수 없음 (조회된 주문 {len(output_list)}건)")
+                return {
+                    "status": "접수",
+                    "filled_qty": 0,
+                    "filled_price": 0.0,
+                    "unfilled_qty": 0,
+                    "reject_reason": "주문번호를 찾을 수 없음"
+                }
+            else:
+                error_msg = data.get("msg1", "Unknown error")
+                logger.error(f"체결 조회 실패: {error_msg}")
+                return {
+                    "status": "오류",
+                    "filled_qty": 0,
+                    "filled_price": 0.0,
+                    "unfilled_qty": 0,
+                    "reject_reason": error_msg
+                }
+
+        except Exception as e:
+            logger.error(f"체결 조회 예외: {e}", exc_info=True)
+            return {
+                "status": "오류",
+                "filled_qty": 0,
+                "filled_price": 0.0,
+                "unfilled_qty": 0,
+                "reject_reason": str(e)
+            }
 
     @property
     def account_list(self) -> List[str]:

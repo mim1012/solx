@@ -91,7 +91,13 @@ class GridSettings:
     telegram_enabled: bool = False
 
     # 시스템 설정
-    excel_update_interval: float = 1.0  # Excel 업데이트 주기 (초)
+    excel_update_interval: float = 1.0      # Excel 업데이트 주기 (초)
+    price_check_interval: float = 40.0      # 시세 조회 주기 (초) - 기본값 40초
+
+    # 체결 확인 설정
+    fill_check_enabled: bool = True         # 체결 확인 활성화
+    fill_check_max_retries: int = 10        # 체결 확인 최대 재시도 (기본: 10회)
+    fill_check_interval: float = 2.0        # 체결 확인 간격 (초, 기본: 2초)
 
     # 그리드 파라미터 (계산값)
     seed_ratio: float = 0.05     # 시드 비율 (5%)

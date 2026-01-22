@@ -199,11 +199,18 @@ class GridEngine:
         sorted_positions = sorted(self.positions, key=lambda p: p.tier, reverse=True)
 
         for pos in sorted_positions:
-            # 목표 수익률 달성 여부 확인
-            profit_rate = (current_price - pos.avg_price) / pos.avg_price
+            # 티어 지정 가격 기준으로 매도가 계산 (실제 매수가 무관)
+            tier_buy_price = self.calculate_tier_price(pos.tier)
+            tier_sell_price = tier_buy_price * (1 + self.settings.sell_target)
 
-            if profit_rate >= self.settings.sell_target:
-                logger.info(f"Tier {pos.tier} 매도 조건 충족: 수익률 {profit_rate:.2%} ≥ {self.settings.sell_target:.2%}")
+            if current_price >= tier_sell_price:
+                # 실제 수익률 계산 (로깅용)
+                actual_profit_rate = (current_price - pos.avg_price) / pos.avg_price
+                logger.info(
+                    f"Tier {pos.tier} 매도 조건 충족: "
+                    f"현재가 ${current_price:.2f} ≥ 티어매도가 ${tier_sell_price:.2f} "
+                    f"(실제수익률: {actual_profit_rate:.2%})"
+                )
                 return pos.tier
 
         return None
@@ -262,18 +269,38 @@ class GridEngine:
             reason=reason
         )
 
-    def execute_buy(self, signal: TradeSignal) -> Position:
+    def execute_buy(
+        self,
+        signal: TradeSignal,
+        actual_filled_price: Optional[float] = None,
+        actual_filled_qty: Optional[int] = None
+    ) -> Position:
         """
-        매수 실행 (시뮬레이션)
+        매수 실행 (실제 체결가/수량 반영)
 
         Args:
             signal: 매수 신호
+            actual_filled_price: 실제 체결가 (None이면 signal.price 사용)
+            actual_filled_qty: 실제 체결 수량 (None이면 signal.quantity 사용)
 
         Returns:
             생성된 포지션
         """
+        # 실제 체결가/수량 사용 (없으면 signal 값 사용)
+        filled_price = actual_filled_price if actual_filled_price is not None else signal.price
+        filled_qty = actual_filled_qty if actual_filled_qty is not None else signal.quantity
+
+        # [P0 FIX] 0수량 포지션 방지
+        if filled_qty <= 0:
+            logger.warning(
+                f"매수 실행 거부: Tier {signal.tier} - "
+                f"체결 수량이 0 이하입니다 (filled_qty={filled_qty}). "
+                f"포지션을 생성하지 않습니다."
+            )
+            return None
+
         # 실제 투자금 계산
-        invested = signal.price * signal.quantity
+        invested = filled_price * filled_qty
 
         # 잔고 차감
         if self.account_balance < invested:
@@ -281,53 +308,92 @@ class GridEngine:
 
         self.account_balance -= invested
 
-        # 포지션 생성
+        # 포지션 생성 (실제 체결가/수량 사용)
         position = Position(
             tier=signal.tier,
-            quantity=signal.quantity,
-            avg_price=signal.price,
+            quantity=filled_qty,
+            avg_price=filled_price,
             invested_amount=invested,
             opened_at=datetime.now()
         )
 
         self.positions.append(position)
-        logger.info(f"매수 체결: Tier {signal.tier}, {signal.quantity}주 @ ${signal.price:.2f}")
+
+        # 로그에 실제 체결 정보 포함
+        if actual_filled_price is not None or actual_filled_qty is not None:
+            logger.info(
+                f"매수 체결: Tier {signal.tier} - "
+                f"주문 {signal.quantity}주 @ ${signal.price:.2f}, "
+                f"실제 체결 {filled_qty}주 @ ${filled_price:.2f}"
+            )
+        else:
+            logger.info(f"매수 체결: Tier {signal.tier}, {filled_qty}주 @ ${filled_price:.2f}")
 
         return position
 
-    def execute_sell(self, signal: TradeSignal) -> float:
+    def execute_sell(
+        self,
+        signal: TradeSignal,
+        actual_filled_price: Optional[float] = None,
+        actual_filled_qty: Optional[int] = None
+    ) -> float:
         """
-        매도 실행 (시뮬레이션)
+        매도 실행 (실제 체결가/수량 반영)
 
         Args:
             signal: 매도 신호
+            actual_filled_price: 실제 체결가 (None이면 signal.price 사용)
+            actual_filled_qty: 실제 체결 수량 (None이면 signal.quantity 사용)
 
         Returns:
-            매도 수익금 (USD) - 총 매도 금액
+            매도 수익금 (USD) - 실현 수익 (총 매도 금액 - 투자금)
         """
+        # 실제 체결가/수량 사용 (없으면 signal 값 사용)
+        filled_price = actual_filled_price if actual_filled_price is not None else signal.price
+        filled_qty = actual_filled_qty if actual_filled_qty is not None else signal.quantity
+
+        # [P0 FIX] 0수량 체결 방지
+        if filled_qty <= 0:
+            logger.warning(
+                f"매도 실행 거부: Tier {signal.tier} - "
+                f"체결 수량이 0 이하입니다 (filled_qty={filled_qty}). "
+                f"포지션을 유지합니다."
+            )
+            return 0.0  # 수익 0
+
         # 해당 티어 포지션 찾기
         position = next((p for p in self.positions if p.tier == signal.tier), None)
         if not position:
             raise ValueError(f"Tier {signal.tier} 포지션을 찾을 수 없음")
 
-        # 매도 금액 계산
-        sell_amount = signal.price * signal.quantity
+        # 매도 금액 계산 (실제 체결가 사용)
+        sell_amount = filled_price * filled_qty
 
         # 잔고 증가
         self.account_balance += sell_amount
 
         # 포지션 업데이트 또는 제거
-        if signal.quantity == position.quantity:
-            # 전체 매도 - 포지션 제거
+        if filled_qty >= position.quantity:
+            # 전체 매도 (또는 초과) - 포지션 제거
             self.positions.remove(position)
             profit = sell_amount - position.invested_amount
-            logger.info(f"매도 체결 (전체): Tier {signal.tier}, {signal.quantity}주 @ ${signal.price:.2f}, 수익: ${profit:.2f}")
+
+            # 로그에 실제 체결 정보 포함
+            if actual_filled_price is not None or actual_filled_qty is not None:
+                logger.info(
+                    f"매도 체결 (전체): Tier {signal.tier} - "
+                    f"주문 {signal.quantity}주 @ ${signal.price:.2f}, "
+                    f"실제 체결 {filled_qty}주 @ ${filled_price:.2f}, "
+                    f"수익: ${profit:.2f}"
+                )
+            else:
+                logger.info(f"매도 체결 (전체): Tier {signal.tier}, {filled_qty}주 @ ${filled_price:.2f}, 수익: ${profit:.2f}")
         else:
             # 부분 매도 - 포지션 업데이트
             invested_per_share = position.invested_amount / position.quantity
-            sold_invested = invested_per_share * signal.quantity
+            sold_invested = invested_per_share * filled_qty
 
-            remaining_quantity = position.quantity - signal.quantity
+            remaining_quantity = position.quantity - filled_qty
             remaining_invested = position.invested_amount - sold_invested
 
             # frozen dataclass이므로 replace 사용
@@ -341,9 +407,19 @@ class GridEngine:
             self.positions[idx] = updated_position
 
             profit = sell_amount - sold_invested
-            logger.info(f"매도 체결 (부분): Tier {signal.tier}, {signal.quantity}주 @ ${signal.price:.2f}, 수익: ${profit:.2f}, 남은 수량: {remaining_quantity}주")
 
-        return sell_amount  # 매도 수익금 (총 매도 금액) 반환
+            # 로그에 실제 체결 정보 포함
+            if actual_filled_price is not None or actual_filled_qty is not None:
+                logger.info(
+                    f"매도 체결 (부분): Tier {signal.tier} - "
+                    f"주문 {signal.quantity}주 @ ${signal.price:.2f}, "
+                    f"실제 체결 {filled_qty}주 @ ${filled_price:.2f}, "
+                    f"수익: ${profit:.2f}, 남은 수량: {remaining_quantity}주"
+                )
+            else:
+                logger.info(f"매도 체결 (부분): Tier {signal.tier}, {filled_qty}주 @ ${filled_price:.2f}, 수익: ${profit:.2f}, 남은 수량: {remaining_quantity}주")
+
+        return profit  # 실현 수익 반환 (기존과 다름: sell_amount가 아닌 profit 반환)
 
     def get_system_state(self, current_price: float) -> SystemState:
         """
@@ -415,12 +491,16 @@ class GridEngine:
                 if sell_count >= MAX_SELL_PER_TICK:
                     break
 
-                profit_rate = (current_price - pos.avg_price) / pos.avg_price
-                if profit_rate >= self.settings.sell_target:
+                # 티어 지정 가격 기준으로 매도가 계산
+                tier_buy_price = self.calculate_tier_price(pos.tier)
+                tier_sell_price = tier_buy_price * (1 + self.settings.sell_target)
+
+                if current_price >= tier_sell_price:
                     signal = self.generate_sell_signal(current_price, pos.tier)
                     signals.append(signal)
                     sell_count += 1
-                    logger.info(f"매도 신호 생성: Tier {pos.tier}, 수익률 {profit_rate:.2%}")
+                    actual_profit_rate = (current_price - pos.avg_price) / pos.avg_price
+                    logger.info(f"매도 신호 생성: Tier {pos.tier}, 티어매도가 ${tier_sell_price:.2f} (실제수익률: {actual_profit_rate:.2%})")
 
         # 3. 매수 조건 확인 (최대 5개)
         # [FIX #2] Limit 스위치 체크
