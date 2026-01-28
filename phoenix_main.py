@@ -11,7 +11,7 @@ import signal
 import logging
 from enum import Enum
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # 프로젝트 루트를 Python 경로에 추가 (PyInstaller 빌드 시에도 동작)
 if getattr(sys, 'frozen', False):
@@ -100,6 +100,162 @@ class PhoenixTradingSystem:
         """종료 시그널 처리 (Ctrl+C)"""
         logger.info(f"\n종료 시그널 수신 ({signum}). 안전하게 종료 중...")
         self.stop_requested = True
+
+    def _is_dst(self, date: datetime) -> bool:
+        """
+        미국 서머타임(Daylight Saving Time) 여부 확인
+
+        서머타임 기간: 3월 두 번째 일요일 ~ 11월 첫 번째 일요일
+
+        Args:
+            date: 확인할 날짜
+
+        Returns:
+            bool: 서머타임이면 True
+        """
+        year = date.year
+
+        # 3월 두 번째 일요일 계산
+        march = datetime(year, 3, 1)
+        days_until_sunday = (6 - march.weekday()) % 7
+        first_sunday = march + timedelta(days=days_until_sunday)
+        dst_start = first_sunday + timedelta(weeks=1)  # 두 번째 일요일
+
+        # 11월 첫 번째 일요일 계산
+        november = datetime(year, 11, 1)
+        days_until_sunday = (6 - november.weekday()) % 7
+        dst_end = november + timedelta(days=days_until_sunday)  # 첫 번째 일요일
+
+        return dst_start <= date < dst_end
+
+    def _is_market_open(self) -> tuple[bool, str]:
+        """
+        미국 주식 시장 개장 여부 확인 (한국 시간 기준, 서머타임 반영)
+
+        [KIS API 공식 문서 기준]
+        미국 정규장: 월~금 09:30~16:00 (미국 동부시간)
+
+        한국 시간 변환:
+        - 표준시 (EST, 11월~3월): 23:30 ~ 06:00 (시차 14시간)
+        - 서머타임 (EDT, 3월~11월): 22:30 ~ 05:00 (시차 13시간)
+
+        프리마켓/애프터마켓: 주문 불가
+        - 프리마켓: 표준시 18:00~23:30, 서머타임 17:00~22:30
+        - 애프터마켓: 표준시 06:00~07:00, 서머타임 05:00~07:00
+
+        Returns:
+            tuple[bool, str]: (개장 여부, 메시지)
+        """
+        now = datetime.now()
+        is_dst = self._is_dst(now)
+        weekday = now.weekday()  # 0=월요일, 6=일요일
+        hour = now.hour
+        minute = now.minute
+
+        # 거래시간 설정 (서머타임 반영)
+        if is_dst:
+            # 서머타임: 22:30 ~ 05:00 (정규장)
+            open_hour, open_minute = 22, 30
+            close_hour, close_minute = 5, 0
+            premarket_start = 17  # 프리마켓 시작
+            aftermarket_end = 7   # 애프터마켓 종료
+            season = "서머타임(EDT)"
+        else:
+            # 표준시: 23:30 ~ 06:00 (정규장)
+            open_hour, open_minute = 23, 30
+            close_hour, close_minute = 6, 0
+            premarket_start = 18  # 프리마켓 시작
+            aftermarket_end = 7   # 애프터마켓 종료
+            season = "표준시(EST)"
+
+        # 주말 체크 (미국 시간 기준)
+        if weekday == 5 and (hour > close_hour or (hour == close_hour and minute > close_minute)):
+            # 토요일 정규장 종료 이후
+            next_monday = now + timedelta(days=2)
+            next_open = next_monday.replace(hour=open_hour, minute=open_minute, second=0, microsecond=0)
+            return False, f"주말입니다. 다음 개장: {next_open.strftime('%Y-%m-%d %H:%M')} ({season})"
+        elif weekday == 6:
+            # 일요일 전체
+            next_monday = now + timedelta(days=1)
+            next_open = next_monday.replace(hour=open_hour, minute=open_minute, second=0, microsecond=0)
+            return False, f"주말입니다. 다음 개장: {next_open.strftime('%Y-%m-%d %H:%M')} ({season})"
+        elif weekday == 0 and (hour < open_hour or (hour == open_hour and minute < open_minute)):
+            # 월요일 정규장 개장 이전
+            next_open = now.replace(hour=open_hour, minute=open_minute, second=0, microsecond=0)
+            return False, f"주말입니다. 다음 개장: {next_open.strftime('%H:%M')} ({season})"
+
+        # 정규장 시간 체크 (서머타임 반영)
+        if is_dst:
+            # 서머타임: 22:30 ~ 05:00
+            is_open = (
+                (hour == 22 and minute >= 30) or
+                (hour == 23) or
+                (hour < 5) or
+                (hour == 5 and minute == 0)
+            )
+        else:
+            # 표준시: 23:30 ~ 06:00
+            is_open = (
+                (hour == 23 and minute >= 30) or
+                (hour < 6) or
+                (hour == 6 and minute == 0)
+            )
+
+        if is_open:
+            return True, f"정규장 개장 중 ({season})"
+
+        # KIS API 문서: 프리마켓/애프터마켓 시간대에도 주문 가능
+        # 프리마켓 시간대 (주문 가능)
+        if is_dst:
+            # 서머타임: 17:00 ~ 22:29
+            in_premarket = (
+                (hour >= 17 and hour < 22) or
+                (hour == 22 and minute < 30)
+            )
+        else:
+            # 표준시: 18:00 ~ 23:29
+            in_premarket = (
+                (hour >= 18 and hour < 23) or
+                (hour == 23 and minute < 30)
+            )
+
+        if in_premarket:
+            return True, f"프리마켓 시간 (주문 가능) - 정규장: {open_hour:02d}:{open_minute:02d} ({season})"
+
+        # 애프터마켓 시간대 (주문 가능)
+        if is_dst:
+            # 서머타임: 05:01 ~ 07:00
+            in_aftermarket = (
+                (hour == 5 and minute > 0) or
+                (hour == 6)
+            )
+        else:
+            # 표준시: 06:01 ~ 07:00
+            in_aftermarket = (
+                (hour == 6 and minute > 0)
+            )
+
+        if in_aftermarket:
+            return True, f"애프터마켓 시간 (주문 가능) - 다음 정규장: {open_hour:02d}:{open_minute:02d} ({season})"
+
+        # 기타 시간 (장 마감)
+        next_open = now.replace(hour=open_hour, minute=open_minute, second=0, microsecond=0)
+        return False, f"장 마감 - 다음 개장: {next_open.strftime('%H:%M')} ({season})"
+
+    def _wait_for_market_open(self):
+        """시장 개장 시간까지 대기"""
+        while not self.stop_requested:
+            is_open, message = self._is_market_open()
+
+            if is_open:
+                logger.info(f"[OK] {message}")
+                break
+
+            logger.info(f"[WAIT] {message}")
+            print(f"\r[대기 중] {message} - {datetime.now().strftime('%H:%M:%S')}", end="", flush=True)
+
+            # 1분마다 체크
+            time.sleep(60)
 
     def initialize(self) -> InitStatus:
         """
@@ -191,17 +347,35 @@ class PhoenixTradingSystem:
             logger.info(f"  - 고가: ${price_data['high']:.2f}")
             logger.info(f"  - 저가: ${price_data['low']:.2f}")
 
-            # 8. 계좌 잔고 조회
-            logger.info("계좌 잔고 조회 중...")
-            balance = self.kis_adapter.get_balance()
+            # 8. USD 예수금 조회 (매수가능금액조회 API)
+            logger.info("USD 예수금 조회 중...")
+            balance = self.kis_adapter.get_cash_balance(ticker=self.settings.ticker, price=current_price)
 
             if balance is None:
-                logger.error("계좌 잔고 조회 실패!")
+                logger.error("USD 예수금 조회 실패!")
                 return InitStatus.ERROR_BALANCE
 
-            logger.info(f"  - 예수금: ${balance:,.2f}")
+            logger.info(f"  - USD 예수금: ${balance:,.2f}")
 
-            # 9. GridEngine 초기값 설정
+            # 잔고 0 경고
+            if balance == 0.0:
+                logger.warning("=" * 60)
+                logger.warning("[주의] USD 예수금이 $0.00 입니다!")
+                logger.warning("=" * 60)
+                logger.warning("이것은 다음 중 하나를 의미합니다:")
+                logger.warning("  1. 계좌에 USD 잔고가 없음")
+                logger.warning("  2. 해당 계좌에서 해외주식 거래 이력이 없음")
+                logger.warning("")
+                logger.warning("자동 거래를 시작하려면:")
+                logger.warning("  1. 증권사 앱에서 USD 입금 (원화→달러 환전)")
+                logger.warning("  2. 또는 해외주식을 1회 이상 거래하여 계좌 활성화")
+                logger.warning("=" * 60)
+
+            # 9. 보유 주식 정보 조회 (참고용)
+            logger.info("보유 주식 조회 중...")
+            self.kis_adapter.get_balance()
+
+            # 10. GridEngine 초기값 설정
             self.grid_engine.tier1_price = current_price
             self.grid_engine.account_balance = balance
             self.grid_engine.current_price = current_price
@@ -250,10 +424,25 @@ class PhoenixTradingSystem:
             logger.error("=" * 60)
             return status.value  # 20-24
 
-        # 정상 초기화 완료, 거래 시작
+        # 정상 초기화 완료
         self.is_running = True
+
+        # 시장 개장 시간 체크
+        logger.info("=" * 60)
+        logger.info("시장 개장 시간 확인 중...")
+        logger.info("=" * 60)
+        self._wait_for_market_open()
+
+        if self.stop_requested:
+            logger.info("사용자에 의해 대기 중 종료됨")
+            return 0
+
+        # 거래 시작
+        logger.info("")
+        logger.info("=" * 60)
         logger.info("메인 거래 루프 시작...")
         logger.info("종료하려면 Ctrl+C를 누르세요.")
+        logger.info("=" * 60)
         logger.info("")
 
         try:
@@ -268,10 +457,39 @@ class PhoenixTradingSystem:
 
                 current_price = price_data['price']
 
-                # 2. 매매 신호 확인
+                # 시세가 0이면 시장 마감 체크
+                if current_price <= 0:
+                    is_open, message = self._is_market_open()
+                    if not is_open:
+                        logger.warning(f"시세 $0.00 감지 - {message}")
+                        logger.info("시장 개장 시간까지 대기합니다...")
+                        self._wait_for_market_open()
+                        continue
+
+                # 2. [P0 FIX] Tier 240 도달 긴급 정지 확인 (Risk-03 완화)
+                if any(pos.tier == 240 for pos in self.grid_engine.positions):
+                    logger.error("🛑 Tier 240 도달: 시스템 긴급 정지")
+
+                    if self.telegram:
+                        self.telegram.notify_emergency(
+                            f"🛑 Tier 240 도달 - 긴급 정지\n"
+                            f"현재가: ${current_price:.2f}\n"
+                            f"Tier 1: ${self.grid_engine.tier1_price:.2f}\n"
+                            f"하락률: {((current_price / self.grid_engine.tier1_price) - 1) * 100:.1f}%\n"
+                            f"수동 개입 필요: 손절매 또는 Tier 1 재설정"
+                        )
+
+                    # Excel B15 "시스템 가동" FALSE로 변경
+                    logger.warning("시스템 긴급 정지 (Excel B15 → FALSE)")
+                    self.excel_bridge.update_cell("B15", False)
+                    self.excel_bridge.save_workbook()
+                    self.stop_signal = True
+                    break
+
+                # 3. 매매 신호 확인
                 signals = self.grid_engine.process_tick(current_price)
 
-                # 3. 매매 신호 처리
+                # 4. 매매 신호 처리
                 for signal in signals:
                     self._process_signal(signal)
 
@@ -304,6 +522,30 @@ class PhoenixTradingSystem:
                     logger.info(f"[BATCH BUY] 배치 매수 신호: Tiers {signal.tiers}, 총 {signal.quantity}주 @ ${signal.price:.2f}")
                 else:
                     logger.info(f"[BUY] 매수 신호: Tier {signal.tier}, {signal.quantity}주 @ ${signal.price:.2f}")
+
+                # [P0 FIX] 잔고 사전 검증 (Risk-02 완화)
+                required_capital = signal.quantity * signal.price
+
+                if self.grid_engine.account_balance < required_capital:
+                    logger.error(
+                        f"❌ 잔고 부족: ${required_capital:.2f} 필요, "
+                        f"${self.grid_engine.account_balance:.2f} 보유"
+                    )
+
+                    if self.telegram:
+                        self.telegram.notify_error(
+                            f"🛑 긴급 정지: 잔고 부족\n"
+                            f"필요 금액: ${required_capital:.2f}\n"
+                            f"보유 잔고: ${self.grid_engine.account_balance:.2f}\n"
+                            f"입금 후 시스템 재시작 필요"
+                        )
+
+                    # 긴급 정지 (Excel B15 "시스템 가동" FALSE로 변경)
+                    logger.warning("시스템 긴급 정지 (Excel B15 → FALSE)")
+                    self.excel_bridge.update_cell("B15", False)
+                    self.excel_bridge.save_workbook()
+                    self.stop_signal = True
+                    return
 
                 # 매수 주문 (지정가 - 현재가 이하 보장)
                 result = self.kis_adapter.send_order(
@@ -468,11 +710,41 @@ class PhoenixTradingSystem:
 
             # 아직 체결 안됨 또는 부분 체결 → 재시도
 
-        # 최대 재시도 초과
+        # 최대 재시도 초과 → [P0 FIX] 추가 조회 1회 (5초 대기)
         logger.warning(
             f"[TIMEOUT] 체결 확인 타임아웃: 주문번호 {order_id}, "
-            f"{max_retries * check_interval}초 경과"
+            f"{max_retries * check_interval}초 경과 → 5초 후 최종 확인"
         )
+
+        # [P0 FIX] 타임아웃 후 추가 조회 (Risk-01 완화)
+        time.sleep(5)
+        final_status = self.kis_adapter.get_order_fill_status(order_id)
+
+        if final_status["filled_qty"] > 0:
+            logger.info(
+                f"[FILL RECOVERED] 최종 확인에서 체결 발견! "
+                f"{final_status['filled_qty']}주 @ ${final_status['filled_price']:.2f}"
+            )
+
+            if self.telegram:
+                self.telegram.notify_warning(
+                    f"체결 타임아웃 후 복구\n"
+                    f"주문번호: {order_id}\n"
+                    f"체결: {final_status['filled_qty']}주 @ ${final_status['filled_price']:.2f}"
+                )
+
+            return final_status["filled_price"], final_status["filled_qty"]
+
+        # 최종 확인에서도 체결 없음 → 긴급 알림
+        logger.error(f"[FAIL] 최종 확인 실패: 주문번호 {order_id} - 수동 확인 필요")
+
+        if self.telegram:
+            self.telegram.notify_error(
+                f"⚠️ 체결 타임아웃 발생\n"
+                f"주문번호: {order_id}\n"
+                f"수동 확인 필요: KIS 홈페이지 → 주문 내역 → 체결 여부 확인"
+            )
+
         return 0.0, 0
 
     def _update_system_state(self, current_price: float):
@@ -548,24 +820,55 @@ class PhoenixTradingSystem:
 
 def main():
     """메인 함수"""
-    print("")
-    print("=" * 60)
-    print("Phoenix Trading System v4.1 (KIS REST API)")
-    print("SOXL 자동매매 시스템")
-    print("=" * 60)
-    print("")
+    exit_code = 1  # 기본값: 에러
 
-    # Excel 파일 경로 (인자로 받거나 기본값)
-    excel_file = sys.argv[1] if len(sys.argv) > 1 else None
+    try:
+        print("")
+        print("=" * 60)
+        print("Phoenix Trading System v4.1 (KIS REST API)")
+        print("SOXL 자동매매 시스템")
+        print("=" * 60)
+        print("")
 
-    # 실거래 경고
-    print("[WARNING] 경고: 이 시스템은 실제 자금으로 SOXL을 거래합니다.")
-    print("[WARNING] 손실 위험이 있으며, 투자 책임은 사용자에게 있습니다.")
-    print("")
+        # Excel 파일 경로 (인자로 받거나 기본값)
+        excel_file = sys.argv[1] if len(sys.argv) > 1 else None
 
-    # 시스템 시작
-    system = PhoenixTradingSystem(excel_file)
-    exit_code = system.run()
+        # 실거래 경고
+        print("[WARNING] 경고: 이 시스템은 실제 자금으로 SOXL을 거래합니다.")
+        print("[WARNING] 손실 위험이 있으며, 투자 책임은 사용자에게 있습니다.")
+        print("")
+
+        # 시스템 시작
+        system = PhoenixTradingSystem(excel_file)
+        exit_code = system.run()
+
+    except KeyboardInterrupt:
+        print("\n\n[사용자 중단] Ctrl+C가 눌렸습니다.")
+        exit_code = 130
+    except Exception as e:
+        print("\n\n" + "=" * 60)
+        print("[치명적 에러] 예상치 못한 오류 발생!")
+        print("=" * 60)
+        print(f"에러 타입: {type(e).__name__}")
+        print(f"에러 메시지: {e}")
+        print("\n상세 로그는 logs/ 폴더를 확인하세요.")
+        print("=" * 60)
+        exit_code = 1
+    finally:
+        # 무조건 실행: 창이 닫히지 않도록 대기
+        print("")
+        print("=" * 60)
+        if exit_code == 0:
+            print("[정상 종료] 프로그램이 성공적으로 종료되었습니다.")
+        elif exit_code == 10:
+            print("[시스템 중지] Excel B15가 FALSE로 설정되어 있습니다.")
+            print("자동 거래를 시작하려면 Excel B15를 TRUE로 변경하세요.")
+        else:
+            print(f"[에러 종료] 프로그램이 에러로 종료되었습니다 (코드: {exit_code})")
+            print("위 로그를 확인하여 문제를 파악하세요.")
+        print("=" * 60)
+        print("")
+        input("Press Enter to exit...")
 
     # 종료 코드 반환
     sys.exit(exit_code)

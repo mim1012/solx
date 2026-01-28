@@ -32,6 +32,7 @@ import hashlib
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Callable, List
 from dataclasses import dataclass
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -75,9 +76,11 @@ class KisRestAdapter:
 
     # TR ID 정의
     TR_ID_OVERSEAS_PRICE = "HHDFS00000300"      # 해외주식 현재가
-    TR_ID_OVERSEAS_ORDER = "JTTT1002U"          # 해외주식 주문
+    TR_ID_OVERSEAS_BUY = "TTTT1002U"            # 해외주식 매수 (실전: TTTT1002U, 모의: VTTT1002U)
+    TR_ID_OVERSEAS_SELL = "TTTT1006U"           # 해외주식 매도 (실전: TTTT1006U, 모의: VTTT1001U)
     TR_ID_OVERSEAS_BALANCE = "CTRP6548R"        # 해외주식 잔고
-    TR_ID_OVERSEAS_ACCOUNT = "CTRP6504R"        # 해외주식 계좌잔고
+    TR_ID_OVERSEAS_ACCOUNT = "TTTS3012R"        # 해외주식 잔고 (실전: TTTS3012R, 모의: VTTS3012R)
+    TR_ID_OVERSEAS_BUYABLE = "TTTS3007R"        # 해외주식 매수가능금액조회 (USD 예수금)
     TR_ID_WS_REALTIME = "HDFSCNT0"              # 실시간 체결가
 
     def __init__(self, app_key: str, app_secret: str, account_no: str = "", error_callback: Optional[Callable] = None):
@@ -155,7 +158,7 @@ class KisRestAdapter:
 
     def login(self) -> bool:
         """
-        OAuth2 토큰 + Approval key 발급
+        OAuth2 토큰 + Approval key 발급 (토큰 캐싱 지원)
 
         Returns:
             bool: 로그인 성공 여부
@@ -164,8 +167,32 @@ class KisRestAdapter:
             AuthenticationError: 인증 실패 시
         """
         try:
-            # 1. Access Token 발급
-            url = f"{self.BASE_URL}/oauth2/token"
+            # 토큰 캐시 파일 경로
+            token_cache_file = Path("kis_token_cache.json")
+
+            # 1. 캐시된 토큰 확인
+            if token_cache_file.exists():
+                try:
+                    with open(token_cache_file, "r", encoding="utf-8") as f:
+                        cache = json.load(f)
+
+                    # 만료 시간 확인 (5분 여유)
+                    expires_at = datetime.fromisoformat(cache["expires_at"])
+                    if datetime.now() < expires_at - timedelta(minutes=5):
+                        # 유효한 토큰 재사용
+                        self.access_token = cache["access_token"]
+                        self.token_expires_at = expires_at
+                        self.approval_key = cache.get("approval_key")
+
+                        logger.info(f"[캐시] Access Token 재사용 (만료: {self.token_expires_at})")
+                        return True
+                    else:
+                        logger.info("[캐시] 토큰 만료됨, 재발급 시도...")
+                except Exception as e:
+                    logger.warning(f"[캐시] 토큰 캐시 로드 실패: {e}, 재발급 시도...")
+
+            # 2. Access Token 발급 (실계좌: /oauth2/tokenP, 모의: /oauth2/token)
+            url = f"{self.BASE_URL}/oauth2/tokenP"
 
             payload = {
                 "grant_type": "client_credentials",
@@ -173,7 +200,11 @@ class KisRestAdapter:
                 "appsecret": self.app_secret
             }
 
-            response = requests.post(url, json=payload, timeout=10)
+            headers = {
+                "Content-Type": "application/json; charset=utf-8"
+            }
+
+            response = requests.post(url, json=payload, headers=headers, timeout=10)
 
             if response.status_code == 200:
                 data = response.json()
@@ -205,6 +236,20 @@ class KisRestAdapter:
             else:
                 logger.warning(f"Approval Key 발급 실패: {approval_response.status_code}")
                 # Approval key 없어도 REST API는 사용 가능 (WebSocket만 불가)
+
+            # 3. 토큰 캐시 저장
+            try:
+                cache_data = {
+                    "access_token": self.access_token,
+                    "expires_at": self.token_expires_at.isoformat(),
+                    "approval_key": self.approval_key,
+                    "cached_at": datetime.now().isoformat()
+                }
+                with open(token_cache_file, "w", encoding="utf-8") as f:
+                    json.dump(cache_data, f, indent=2, ensure_ascii=False)
+                logger.info(f"[캐시] 토큰 저장 완료: {token_cache_file}")
+            except Exception as e:
+                logger.warning(f"[캐시] 토큰 저장 실패: {e} (무시하고 계속)")
 
             return True
 
@@ -313,7 +358,7 @@ class KisRestAdapter:
 
     def get_overseas_price(self, ticker: str) -> Optional[Dict]:
         """
-        미국 주식 현재가 조회
+        미국 주식 현재가 조회 (자동 거래소 감지)
 
         Args:
             ticker: 종목코드 (예: SOXL)
@@ -329,52 +374,79 @@ class KisRestAdapter:
                 "volume": 1234567
             }
         """
-        try:
-            self._apply_rate_limit()
+        # 빈 문자열 처리 함수 (안전한 float 변환)
+        def safe_float(value, default=0.0):
+            """빈 문자열을 안전하게 float로 변환"""
+            if value == "" or value is None:
+                return default
+            try:
+                return float(value)
+            except (ValueError, TypeError):
+                return default
 
-            url = f"{self.BASE_URL}/uapi/overseas-price/v1/quotations/price"
+        # 거래소 코드 우선순위: NAS → AMS → NYS
+        # 대부분 종목: NAS (나스닥)
+        # 일부 ETF (SOXL, SPY, SPXL 등): AMS (아멕스)
+        exchanges_to_try = ["NAS", "AMS", "NYS"]
 
-            params = {
-                "EXCD": "NAS",  # 나스닥
-                "SYMB": ticker   # 종목코드
-            }
+        for excd in exchanges_to_try:
+            try:
+                self._apply_rate_limit()
 
-            headers = self._get_headers(tr_id=self.TR_ID_OVERSEAS_PRICE)
+                url = f"{self.BASE_URL}/uapi/overseas-price/v1/quotations/price"
 
-            response = requests.get(
-                url,
-                headers=headers,
-                params=params,
-                timeout=10
-            )
+                params = {
+                    "EXCD": excd,
+                    "SYMB": ticker
+                }
 
-            if response.status_code == 200:
-                data = response.json()
+                headers = self._get_headers(tr_id=self.TR_ID_OVERSEAS_PRICE)
 
-                if data.get("rt_cd") == "0":  # 성공
-                    output = data["output"]
+                response = requests.get(
+                    url,
+                    headers=headers,
+                    params=params,
+                    timeout=10
+                )
 
-                    return {
-                        "ticker": ticker,
-                        "price": float(output.get("last", 0)),
-                        "open": float(output.get("open", 0)),
-                        "high": float(output.get("high", 0)),
-                        "low": float(output.get("low", 0)),
-                        "volume": int(output.get("tvol", 0))
-                    }
-                else:
-                    logger.error(f"시세 조회 실패: {data.get('msg1')}")
-                    return None
-            else:
-                logger.error(f"시세 조회 HTTP 오류: {response.status_code} - {response.text}")
-                return None
+                if response.status_code == 200:
+                    data = response.json()
 
-        except AuthenticationError as e:
-            logger.error(f"인증 오류: {e}")
-            raise
-        except Exception as e:
-            logger.error(f"시세 조회 예외: {e}")
-            return None
+                    if data.get("rt_cd") == "0":  # 성공
+                        output = data["output"]
+
+                        # 디버깅: 실제 API 응답 확인
+                        logger.debug(f"KIS API 시세 응답 ({excd}): {output}")
+
+                        price = safe_float(output.get("last"))
+
+                        # 가격이 0보다 크면 성공
+                        if price > 0:
+                            if excd != "NAS":
+                                logger.info(f"[거래소 자동 감지] {ticker}는 {excd} 거래소에서 조회됨")
+
+                            return {
+                                "ticker": ticker,
+                                "price": price,
+                                "open": safe_float(output.get("open")),
+                                "high": safe_float(output.get("high")),
+                                "low": safe_float(output.get("low")),
+                                "volume": int(output.get("tvol") or 0)
+                            }
+                        else:
+                            # 가격이 0이면 다음 거래소 시도
+                            logger.debug(f"{ticker}: {excd} 거래소에서 시세 없음 (다음 거래소 시도)")
+                            continue
+
+            except AuthenticationError:
+                raise
+            except Exception as e:
+                logger.warning(f"{ticker}: {excd} 거래소 조회 중 예외: {e}")
+                continue
+
+        # 모든 거래소에서 실패
+        logger.error(f"{ticker}: 모든 거래소(NAS, AMS, NYS)에서 시세 조회 실패")
+        return None
 
     # =====================================
     # 3. 주문 실행
@@ -437,9 +509,12 @@ class KisRestAdapter:
             # Hashkey 생성
             hashkey = self._get_hashkey(payload)
 
+            # TR_ID 선택 (매수/매도 구분)
+            tr_id = self.TR_ID_OVERSEAS_BUY if order_type == "buy" else self.TR_ID_OVERSEAS_SELL
+
             # 헤더 생성
             headers = self._get_headers(
-                tr_id=self.TR_ID_OVERSEAS_ORDER,
+                tr_id=tr_id,
                 custtype="P",
                 hashkey=hashkey
             )
@@ -526,13 +601,18 @@ class KisRestAdapter:
             self._apply_rate_limit()
 
             account = account_no or self.account_no
+            # [P0 FIX] 계좌번호 파싱 사용
+            cano, acnt_prdt_cd = self._parse_account_no(account)
+
             url = f"{self.BASE_URL}/uapi/overseas-stock/v1/trading/inquire-balance"
 
             params = {
-                "CANO": account,
-                "ACNT_PRDT_CD": "01",
-                "OVRS_EXCG_CD": "NASD",
-                "TR_CRCY_CD": "USD"
+                "CANO": cano,
+                "ACNT_PRDT_CD": acnt_prdt_cd,
+                "OVRS_EXCG_CD": "",         # 해외거래소코드 (빈 문자열: 전체)
+                "TR_CRCY_CD": "USD",        # 거래통화코드
+                "CTX_AREA_FK200": "",       # 연속조회검색조건200 (최초 조회시 공란)
+                "CTX_AREA_NK200": ""        # 연속조회키200 (최초 조회시 공란)
             }
 
             headers = self._get_headers(tr_id=self.TR_ID_OVERSEAS_ACCOUNT)
@@ -548,16 +628,46 @@ class KisRestAdapter:
                 data = response.json()
 
                 if data.get("rt_cd") == "0":
-                    output = data.get("output2", {})
-                    balance = float(output.get("frcr_dncl_amt_2", 0))  # 외화예수금
+                    output1 = data.get("output1", [])
+                    output2 = data.get("output2")  # list 또는 dict 가능
 
-                    logger.debug(f"계좌 잔고: ${balance:.2f}")
-                    return balance
+                    # 디버그: API 응답 구조 확인
+                    logger.info(f"KIS API 잔고조회 성공: output1 {len(output1)}건, output2 타입={type(output2)}")
+                    logger.info(f"[DEBUG] output2 내용: {output2}")
+
+                    # output2에서 예수금 조회 (list 또는 dict 처리)
+                    cash = 0.0
+
+                    if output2:
+                        # output2가 dict인 경우 (잔고 없을 때)
+                        if isinstance(output2, dict):
+                            cash = float(output2.get("frcr_drwg_psbl_amt_1", 0) or 0)
+                            logger.info(f"USD 예수금 (dict): ${cash:.2f}")
+
+                        # output2가 list인 경우 (잔고 있을 때)
+                        elif isinstance(output2, list) and len(output2) > 0:
+                            if isinstance(output2[0], dict):
+                                cash = float(output2[0].get("frcr_drwg_psbl_amt_1", 0) or 0)
+                                logger.info(f"USD 예수금 (list): ${cash:.2f}")
+
+                    # output1에서 보유 종목 확인
+                    if len(output1) > 0:
+                        for item in output1:
+                            if item.get("ovrs_pdno"):  # 종목코드가 있으면 실제 보유
+                                ticker = item.get("ovrs_pdno", "")
+                                qty = item.get("ovrs_cblc_qty", "0")
+                                logger.info(f"  보유종목: {ticker} {qty}주")
+                    else:
+                        logger.info("  보유종목: 없음")
+
+                    return cash  # 예수금 반환
                 else:
-                    logger.error(f"잔고 조회 실패: {data.get('msg1')}")
+                    error_msg = data.get('msg1', 'Unknown error')
+                    logger.error(f"잔고 조회 실패: rt_cd={data.get('rt_cd')}, msg1={error_msg}")
+                    logger.error(f"전체 응답: {data}")
                     return 0.0
             else:
-                logger.error(f"잔고 조회 HTTP 오류: {response.status_code}")
+                logger.error(f"잔고 조회 HTTP 오류: {response.status_code}, 응답: {response.text}")
                 return 0.0
 
         except AuthenticationError as e:
@@ -565,6 +675,78 @@ class KisRestAdapter:
             raise
         except Exception as e:
             logger.error(f"잔고 조회 예외: {e}")
+            return 0.0
+
+    def get_cash_balance(self, ticker: str = "SOXL", price: float = 1.0, account_no: str = "") -> float:
+        """
+        USD 예수금 조회 (매수가능금액조회 API 사용)
+
+        Args:
+            ticker: 조회할 종목코드 (기본값: SOXL)
+            price: 조회할 주문단가 (기본값: 1.0, 현재가 사용 권장)
+            account_no: 계좌번호 (옵션, 미제공 시 기본 계좌 사용)
+
+        Returns:
+            float: USD 예수금 (주문가능외화금액)
+        """
+        try:
+            account = account_no or self.account_no
+            cano, acnt_prdt_cd = self._parse_account_no(account)
+
+            url = f"{self.BASE_URL}/uapi/overseas-stock/v1/trading/inquire-psamount"
+
+            params = {
+                "CANO": cano,
+                "ACNT_PRDT_CD": acnt_prdt_cd,
+                "OVRS_EXCG_CD": "NASD",           # 나스닥 (미국)
+                "OVRS_ORD_UNPR": f"{price:.2f}",  # 주문단가 (소수점 2자리면 충분)
+                "ITEM_CD": ticker                 # 종목코드
+            }
+
+            headers = self._get_headers(tr_id=self.TR_ID_OVERSEAS_BUYABLE)
+
+            response = requests.get(
+                url,
+                headers=headers,
+                params=params,
+                timeout=10
+            )
+
+            if response.status_code == 200:
+                data = response.json()
+
+                logger.info(f"[DEBUG] 매수가능금액조회 응답 rt_cd: {data.get('rt_cd')}")
+                logger.info(f"[DEBUG] 매수가능금액조회 응답 msg1: {data.get('msg1')}")
+
+                if data.get("rt_cd") == "0":
+                    output = data.get("output", {})
+
+                    logger.info(f"[DEBUG] output 타입: {type(output)}")
+                    logger.info(f"[DEBUG] output 내용: {output}")
+
+                    # ord_psbl_frcr_amt: 주문가능외화금액 (USD 예수금)
+                    cash_balance = float(output.get("ord_psbl_frcr_amt", 0))
+
+                    logger.info(f"USD 예수금 조회 성공: ${cash_balance:.2f}")
+                    return cash_balance
+                elif data.get("rt_cd") == "7":
+                    # rt_cd=7: "상품이 없습니다" → 거래 이력 없음 or 잔고 0
+                    msg = data.get('msg1', '').strip()
+                    logger.info(f"예수금 조회: {msg} → USD 잔고 $0.00으로 처리")
+                    return 0.0
+                else:
+                    error_msg = data.get('msg1', 'Unknown error')
+                    logger.error(f"예수금 조회 실패: rt_cd={data.get('rt_cd')}, msg1={error_msg}")
+                    return 0.0
+            else:
+                logger.error(f"예수금 조회 HTTP 오류: {response.status_code}, 응답: {response.text}")
+                return 0.0
+
+        except AuthenticationError as e:
+            logger.error(f"인증 오류: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"예수금 조회 예외: {e}")
             return 0.0
 
     def get_account_list(self) -> List[str]:
