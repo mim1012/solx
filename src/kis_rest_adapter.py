@@ -609,7 +609,7 @@ class KisRestAdapter:
             params = {
                 "CANO": cano,
                 "ACNT_PRDT_CD": acnt_prdt_cd,
-                "OVRS_EXCG_CD": "",         # 해외거래소코드 (빈 문자열: 전체)
+                "OVRS_EXCG_CD": "NASD",     # 해외거래소코드 (실전: NASD=미국전체)
                 "TR_CRCY_CD": "USD",        # 거래통화코드
                 "CTX_AREA_FK200": "",       # 연속조회검색조건200 (최초 조회시 공란)
                 "CTX_AREA_NK200": ""        # 연속조회키200 (최초 조회시 공란)
