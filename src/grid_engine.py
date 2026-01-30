@@ -155,6 +155,16 @@ class GridEngine:
         # [CUSTOM v3.1] 시작 티어 결정
         start_tier = 1 if self.settings.tier1_trading_enabled else 2
 
+        # [P0 FIX] Tier 230 도달 조기 경고 (Risk-03 완화)
+        max_tier_held = max([pos.tier for pos in self.positions], default=0)
+        if max_tier_held >= 230:
+            logger.warning(f"⚠️ Tier {max_tier_held} 도달: 위험 수준 접근 (Tier 240까지 {240 - max_tier_held}개 티어 남음)")
+
+        # [P0 FIX] Tier 240 도달 시 매수 중단 (Risk-03 완화)
+        if any(pos.tier == 240 for pos in self.positions):
+            logger.error("🛑 Tier 240 도달: 추가 매수 중단")
+            return None
+
         # 티어 순회 (낮은 티어부터)
         for tier in range(start_tier, self.settings.total_tiers + 1):
             # 이미 보유 중인 티어는 제외
@@ -226,9 +236,13 @@ class GridEngine:
         Returns:
             매수 신호
         """
-        # 매수 수량 계산 (최소 1주 보장)
-        raw_qty = self.settings.tier_amount / current_price
-        quantity = max(1, floor(raw_qty))
+        # 매수 수량 계산 (최소 1주 보장, 0으로 나누기 방지)
+        if current_price <= 0:
+            logger.warning(f"[SKIP] 현재가가 유효하지 않음 (${current_price:.2f}), 매수 수량 1로 설정")
+            quantity = 1
+        else:
+            raw_qty = self.settings.tier_amount / current_price
+            quantity = max(1, floor(raw_qty))
 
         reason = f"Tier {tier} 진입 (기준가: ${self.calculate_tier_price(tier):.2f})"
         if tier == 1 and self.settings.tier1_trading_enabled:
@@ -310,7 +324,28 @@ class GridEngine:
 
         # [NEW] 배치 주문 처리
         if signal.tiers and len(signal.tiers) > 1:
-            # 배치: 각 티어에 동일 수량 분배
+            # [P0 FIX] 배치: 극단적 부분체결 검증
+            if filled_qty < len(signal.tiers):
+                logger.warning(
+                    f"[PARTIAL FILL] 배치 매수 극단적 부분체결! "
+                    f"체결: {filled_qty}주 < 티어 수: {len(signal.tiers)}"
+                )
+                # 첫 번째 티어에만 전량 할당
+                position = Position(
+                    tier=signal.tiers[0],
+                    quantity=filled_qty,
+                    avg_price=filled_price,
+                    invested_amount=filled_price * filled_qty,
+                    opened_at=datetime.now()
+                )
+                self.positions.append(position)
+
+                logger.info(
+                    f"배치 매수 부분체결 완료: Tier {signal.tiers[0]}에 {filled_qty}주 @ ${filled_price:.2f} 할당"
+                )
+                return position
+
+            # 정상 배치: 각 티어에 동일 수량 분배
             qty_per_tier = filled_qty // len(signal.tiers)
             remainder = filled_qty % len(signal.tiers)
 
@@ -318,6 +353,12 @@ class GridEngine:
             for i, tier in enumerate(signal.tiers):
                 # 나머지 수량은 첫 번째 티어에 추가
                 tier_qty = qty_per_tier + (remainder if i == 0 else 0)
+
+                # [P0 FIX] 0주 포지션 생성 방지
+                if tier_qty <= 0:
+                    logger.warning(f"Tier {tier} 수량 0주로 스킵 (배치 매수)")
+                    continue
+
                 tier_invested = filled_price * tier_qty
 
                 position = Position(
@@ -337,7 +378,7 @@ class GridEngine:
                 f"티어당 {qty_per_tier}주 분배"
             )
 
-            return created_positions[0]  # 대표 티어 반환
+            return created_positions[0] if created_positions else None
 
         else:
             # 단일 티어 처리 (기존 로직)
@@ -395,37 +436,117 @@ class GridEngine:
 
         # [NEW] 배치 주문 처리
         if signal.tiers and len(signal.tiers) > 1:
-            total_profit = 0.0
-            total_invested = 0.0
-            total_sold_qty = 0
-
-            # 각 티어 포지션 제거
+            # [P0 FIX] 부분체결 처리: 먼저 총 보유 수량 계산
+            tier_positions = []
+            total_quantity = 0
             for tier in signal.tiers:
                 position = next((p for p in self.positions if p.tier == tier), None)
                 if not position:
                     logger.warning(f"Tier {tier} 포지션을 찾을 수 없음 (배치 매도 중)")
                     continue
+                tier_positions.append(position)
+                total_quantity += position.quantity
 
-                # 포지션 제거
-                self.positions.remove(position)
-                total_invested += position.invested_amount
-                total_sold_qty += position.quantity
+            # 높은 티어부터 제거 (낮은 가격에 산 것부터 매도)
+            tier_positions.sort(key=lambda p: p.tier, reverse=True)
 
-            # 매도 금액 계산
-            sell_amount = filled_price * filled_qty
+            if total_quantity == 0:
+                logger.error(f"배치 매도 실패: 보유 수량 0 (Tiers {signal.tiers})")
+                return 0.0
 
-            # 잔고 증가
-            self.account_balance += sell_amount
+            # 체결 수량 검증
+            if filled_qty > total_quantity:
+                logger.warning(
+                    f"체결 수량({filled_qty})이 보유 수량({total_quantity})보다 많음. "
+                    f"보유 수량으로 조정합니다."
+                )
+                filled_qty = total_quantity
 
-            # 수익 계산
-            total_profit = sell_amount - total_invested
+            # 부분체결 vs 전량체결
+            is_partial_fill = (filled_qty < total_quantity)
 
-            # 로그
-            logger.info(
-                f"배치 매도 체결: Tiers {signal.tiers}, "
-                f"총 {filled_qty}주 @ ${filled_price:.2f}, "
-                f"수익: ${total_profit:.2f}"
-            )
+            if is_partial_fill:
+                # 부분체결: 높은 티어부터 순차적으로 제거
+                logger.warning(
+                    f"[PARTIAL FILL] 배치 매도 부분체결 발생! "
+                    f"체결: {filled_qty}주 / 보유: {total_quantity}주"
+                )
+
+                total_profit = 0.0
+                total_invested = 0.0
+                qty_remaining = filled_qty
+
+                for position in tier_positions:
+                    if qty_remaining <= 0:
+                        break
+
+                    # 이 티어에서 제거할 수량 (높은 티어부터 순차 제거)
+                    qty_to_remove = min(position.quantity, qty_remaining)
+
+                    # 투자금 비례 계산
+                    invested_removed = position.invested_amount * (qty_to_remove / position.quantity)
+                    total_invested += invested_removed
+
+                    # 포지션 업데이트
+                    if qty_to_remove >= position.quantity:
+                        # 전량 제거
+                        self.positions.remove(position)
+                        logger.info(
+                            f"  Tier {position.tier}: {position.quantity}주 전량 제거"
+                        )
+                    else:
+                        # 일부만 제거: 새 포지션 생성
+                        new_position = Position(
+                            tier=position.tier,
+                            quantity=position.quantity - qty_to_remove,
+                            avg_price=position.avg_price,
+                            invested_amount=position.invested_amount - invested_removed,
+                            opened_at=position.opened_at
+                        )
+                        self.positions.remove(position)
+                        self.positions.append(new_position)
+                        logger.info(
+                            f"  Tier {position.tier}: {qty_to_remove}주 제거 "
+                            f"(잔여: {new_position.quantity}주)"
+                        )
+
+                    qty_remaining -= qty_to_remove
+
+                # 수량 일치 검증
+                if qty_remaining != 0:
+                    logger.error(
+                        f"[CRITICAL] 부분체결 수량 불일치! "
+                        f"체결: {filled_qty}주, 실제 제거: {filled_qty - qty_remaining}주"
+                    )
+
+                # 매도 금액 및 수익 계산
+                sell_amount = filled_price * filled_qty
+                self.account_balance += sell_amount
+                total_profit = sell_amount - total_invested
+
+                logger.info(
+                    f"배치 매도 부분체결 완료: Tiers {signal.tiers}, "
+                    f"체결 {filled_qty}주 @ ${filled_price:.2f}, "
+                    f"수익: ${total_profit:.2f}"
+                )
+
+            else:
+                # 전량체결: 모든 포지션 제거
+                total_invested = 0.0
+                for position in tier_positions:
+                    self.positions.remove(position)
+                    total_invested += position.invested_amount
+
+                # 매도 금액 및 수익 계산
+                sell_amount = filled_price * filled_qty
+                self.account_balance += sell_amount
+                total_profit = sell_amount - total_invested
+
+                logger.info(
+                    f"배치 매도 체결: Tiers {signal.tiers}, "
+                    f"총 {filled_qty}주 @ ${filled_price:.2f}, "
+                    f"수익: ${total_profit:.2f}"
+                )
 
             return total_profit
 
@@ -600,7 +721,11 @@ class GridEngine:
                 # 티어 매수 조건 확인
                 tier_price = self.calculate_tier_price(tier)
                 if current_price <= tier_price:
-                    # 매수 수량 계산
+                    # 매수 수량 계산 (0으로 나누기 방지)
+                    if current_price <= 0:
+                        logger.warning(f"[SKIP] 현재가가 유효하지 않음 (${current_price:.2f}), 매수 건너뜀")
+                        continue
+
                     raw_qty = self.settings.tier_amount / current_price
                     quantity = max(1, floor(raw_qty))
 

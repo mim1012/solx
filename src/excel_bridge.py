@@ -180,7 +180,21 @@ class ExcelBridge:
         ticker = self.ws_master["B3"].value
         investment_usd = float(self.ws_master["B4"].value or 0)
         total_tiers = int(self.ws_master["B5"].value or 240)
-        tier_amount = float(self.ws_master["B6"].value or 0)
+
+        # [FIX] B6 (티어당 투자금) 자동 계산
+        tier_amount_raw = self.ws_master["B6"].value
+
+        # B6이 수식(=로 시작), None, 0이면 자동 계산
+        if (tier_amount_raw is None or
+            tier_amount_raw == 0 or
+            (isinstance(tier_amount_raw, str) and tier_amount_raw.startswith("="))):
+            # 자동 계산 (B4/B5)
+            tier_amount = investment_usd / total_tiers if total_tiers > 0 else 0
+            logger.info(f"[AUTO] 티어당 투자금 자동 계산: ${tier_amount:.2f} = ${investment_usd:,.0f} / {total_tiers} tiers")
+        else:
+            tier_amount = float(tier_amount_raw)
+            logger.info(f"[MANUAL] 티어당 투자금 Excel 설정값 사용: ${tier_amount:.2f}")
+
         tier1_auto_update = self._read_bool(self.ws_master["B7"])
 
         # [CUSTOM v3.1] Tier 1 거래 설정
@@ -256,7 +270,8 @@ class ExcelBridge:
 
     def load_tier_table(self) -> List[Dict]:
         """
-        시트 1 영역 C (A17:E257) 240개 티어 테이블 읽기
+        시트 1 영역 C (A23:E262) 240개 티어 테이블 읽기
+        [P0 FIX] Row 22는 헤더, 실제 데이터는 23~262행
 
         Returns:
             티어 테이블 데이터 (리스트)
@@ -265,7 +280,7 @@ class ExcelBridge:
             self.load_workbook()
 
         tier_table = []
-        for row_idx in range(18, 258):  # 18~257행 (240개)
+        for row_idx in range(23, 263):  # 23~262행 (240개)
             tier = self.ws_master.cell(row=row_idx, column=1).value
             seed_pct = self.ws_master.cell(row=row_idx, column=2).value
             buy_pct = self.ws_master.cell(row=row_idx, column=3).value
