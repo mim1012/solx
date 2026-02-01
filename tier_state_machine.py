@@ -7,13 +7,15 @@ Tier State Machine - Phoenix Trading System
 2. 상태 전이(Transition)는 검증된 경로만 허용
 3. 모든 상태 변경은 Lock으로 보호
 4. 부분 체결, 예외 등 중간 상태 명확히 추적
+5. [v4.1] 포지션 정보(수량, 평단, 투자금)를 TierInfo에서 통합 관리
 """
 
+import copy
 import threading
 import logging
 from enum import Enum
-from dataclasses import dataclass
-from typing import Optional, Dict, List
+from dataclasses import dataclass, field
+from typing import Optional, Dict, List, Tuple
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
@@ -33,7 +35,7 @@ class TierState(Enum):
 
 @dataclass
 class TierInfo:
-    """Tier 정보"""
+    """Tier 정보 (포지션 정보 포함)"""
     tier_id: int                    # Tier 번호 (1~240)
     state: TierState                # 현재 상태
 
@@ -46,6 +48,12 @@ class TierInfo:
     ordered_qty: int = 0            # 주문 수량
     filled_qty: int = 0             # 체결 수량
     filled_price: float = 0.0       # 평균 체결가
+
+    # [v4.1] 포지션 정보 (통합 관리)
+    quantity: int = 0               # 보유 수량
+    avg_price: float = 0.0          # 평균 매수가
+    invested_amount: float = 0.0    # 투자 금액
+    opened_at: Optional[datetime] = None  # 포지션 오픈 시간
 
     # 메타 정보
     last_updated: Optional[datetime] = None
@@ -73,18 +81,23 @@ class TierStateMachine:
         TierState.LOCKED: [TierState.EMPTY, TierState.FILLED, TierState.ORDERING, TierState.ERROR],  # [FIX] ORDERING, ERROR 추가
     }
 
-    def __init__(self, total_tiers: int = 240):
+    def __init__(self, total_tiers: int = 240, account_balance: float = 0.0):
         """
         초기화
 
         Args:
             total_tiers: 총 Tier 개수
+            account_balance: 초기 투자금 (잔고)
         """
         self.total_tiers = total_tiers
         self._tiers: Dict[int, TierInfo] = {}
         self._lock = threading.RLock()  # 재진입 가능 Lock
 
-        logger.info(f"TierStateMachine 초기화: {total_tiers}개 Tier")
+        # [v4.1] 잔고 관리 (단일 데이터 소스)
+        self.account_balance: float = account_balance
+        self.initial_investment: float = account_balance  # 원금 기록
+
+        logger.info(f"TierStateMachine 초기화: {total_tiers}개 Tier, 잔고=${account_balance:.2f}")
 
     def initialize_tier(self, tier_id: int, buy_price: float, sell_price: float):
         """Tier 초기화"""
@@ -265,6 +278,160 @@ class TierStateMachine:
                 for tier in self._tiers.values()
                 if tier.state == state
             ]
+
+    def fill_tier(self, tier_id: int, quantity: int, price: float) -> bool:
+        """
+        [v4.1] 매수 체결 시 포지션 정보 업데이트 + 잔고 차감 (원자적)
+
+        Args:
+            tier_id: Tier 번호
+            quantity: 체결 수량
+            price: 체결 가격
+
+        Returns:
+            bool: 성공 여부
+        """
+        with self._lock:
+            tier = self._tiers.get(tier_id)
+            if not tier:
+                logger.error(f"Tier {tier_id} 없음 (fill_tier)")
+                return False
+
+            # 포지션 정보 업데이트
+            invested = quantity * price
+            tier.quantity = quantity
+            tier.avg_price = price
+            tier.invested_amount = invested
+            tier.opened_at = datetime.now()
+
+            # 잔고 차감
+            self.account_balance -= invested
+
+            logger.info(
+                f"Tier {tier_id} fill_tier: {quantity}주 @ ${price:.2f}, "
+                f"투자금=${invested:.2f}, 잔고=${self.account_balance:.2f}"
+            )
+            return True
+
+    def sell_tier(self, tier_id: int, sell_price: float) -> Tuple[float, float]:
+        """
+        [v4.1] 매도 체결 시 잔고 복구 + 포지션 초기화 (원자적)
+
+        Args:
+            tier_id: Tier 번호
+            sell_price: 매도 가격
+
+        Returns:
+            Tuple[float, float]: (수익금, 매도 대금 합계)
+        """
+        with self._lock:
+            tier = self._tiers.get(tier_id)
+            if not tier:
+                logger.error(f"Tier {tier_id} 없음 (sell_tier)")
+                return 0.0, 0.0
+
+            if tier.quantity <= 0:
+                logger.warning(f"Tier {tier_id} 보유 수량 없음 (sell_tier)")
+                return 0.0, 0.0
+
+            # 수익 계산
+            qty = tier.quantity
+            profit = (sell_price - tier.avg_price) * qty
+            principal = tier.avg_price * qty
+            total_proceeds = principal + profit
+
+            # 잔고 복구
+            self.account_balance += total_proceeds
+
+            logger.info(
+                f"Tier {tier_id} sell_tier: {qty}주 @ ${sell_price:.2f}, "
+                f"원금=${principal:.2f}, 수익=${profit:.2f}, 잔고=${self.account_balance:.2f}"
+            )
+
+            # 포지션 초기화
+            tier.quantity = 0
+            tier.avg_price = 0.0
+            tier.invested_amount = 0.0
+            tier.opened_at = None
+
+            return profit, total_proceeds
+
+    def get_filled_tiers(self) -> List[TierInfo]:
+        """
+        [v4.1] FILLED 상태이면서 quantity > 0인 Tier 목록
+
+        Returns:
+            보유 중인 Tier 리스트 (복사본)
+        """
+        with self._lock:
+            return [
+                copy.deepcopy(tier)
+                for tier in self._tiers.values()
+                if tier.state == TierState.FILLED and tier.quantity > 0
+            ]
+
+    def get_total_positions(self, current_price: float = 0.0) -> Dict:
+        """
+        [v4.1] 전체 보유 포지션 집계
+
+        Args:
+            current_price: 현재가 (평가액 계산용)
+
+        Returns:
+            Dict: 집계 정보
+        """
+        with self._lock:
+            total_quantity = 0
+            total_invested = 0.0
+            position_count = 0
+
+            for tier in self._tiers.values():
+                if tier.state == TierState.FILLED and tier.quantity > 0:
+                    total_quantity += tier.quantity
+                    total_invested += tier.quantity * tier.avg_price
+                    position_count += 1
+
+            stock_value = total_quantity * current_price if current_price > 0 else 0.0
+
+            return {
+                'total_quantity': total_quantity,
+                'total_invested': total_invested,
+                'stock_value': stock_value,
+                'position_count': position_count,
+                'account_balance': self.account_balance,
+            }
+
+    def try_buy_with_balance_check(self, tier_id: int, quantity: int, price: float) -> bool:
+        """
+        [v4.1] EMPTY→LOCKED + 잔고 확인을 원자적으로 수행
+
+        Args:
+            tier_id: Tier 번호
+            quantity: 매수 수량
+            price: 매수 가격
+
+        Returns:
+            bool: Lock + 잔고 확인 성공 여부
+        """
+        with self._lock:
+            tier = self._tiers.get(tier_id)
+            if not tier:
+                return False
+
+            # EMPTY 상태만 Lock 가능
+            if tier.state != TierState.EMPTY:
+                return False
+
+            # 잔고 확인
+            required = quantity * price
+            if self.account_balance < required:
+                logger.warning(
+                    f"Tier {tier_id}: 잔고 부족 (필요=${required:.2f}, 잔고=${self.account_balance:.2f})"
+                )
+                return False
+
+            # EMPTY → LOCKED 전이
+            return self.transition(tier_id, TierState.LOCKED)
 
     def export_to_excel_format(self) -> List[Dict]:
         """Excel 업데이트용 데이터 추출"""
