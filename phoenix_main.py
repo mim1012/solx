@@ -24,7 +24,7 @@ else:
 sys.path.insert(0, str(BASE_DIR))
 
 from src.excel_bridge import ExcelBridge
-from src.grid_engine import GridEngine
+from src.grid_engine_v4_state_machine import GridEngineV4 as GridEngine
 from src.kis_rest_adapter import KisRestAdapter
 from src.telegram_notifier import TelegramNotifier
 from src.models import GridSettings, SystemState
@@ -319,6 +319,17 @@ class PhoenixTradingSystem:
             logger.info("GridEngine 초기화 중...")
             self.grid_engine = GridEngine(self.settings)
 
+            # [v4.0] 상태 머신 초기화 상태 확인
+            status = self.grid_engine.get_status()
+            state_summary = status.get('state_summary', {})
+            logger.info(
+                f"[OK] GridEngine v4.0 초기화 완료 | "
+                f"상태머신[EMPTY:{state_summary.get('EMPTY',0)} "
+                f"FILLED:{state_summary.get('FILLED',0)} "
+                f"ORDERING:{state_summary.get('ORDERING',0)} "
+                f"ERROR:{state_summary.get('ERROR',0)}]"
+            )
+
             # 6. KIS API 연결
             logger.info("KIS REST API 연결 중...")
             self.kis_adapter = KisRestAdapter(
@@ -596,6 +607,15 @@ class PhoenixTradingSystem:
                         self.daily_buy_count += 1
                 else:
                     logger.error(f"[FAIL] 매수 주문 실패: Tier {signal.tier} - {result['message']}")
+                    # [FIX] GridEngine에 실패 알림 → Lock 해제
+                    self.grid_engine.confirm_order(
+                        signal=signal,
+                        order_id="",
+                        filled_qty=0,
+                        filled_price=0,
+                        success=False,
+                        error_message=result.get("message", "주문 실패")
+                    )
 
             elif signal.action == "SELL":
                 if signal.tiers:
@@ -655,6 +675,15 @@ class PhoenixTradingSystem:
                         self.daily_sell_count += 1
                 else:
                     logger.error(f"[FAIL] 매도 주문 실패: Tier {signal.tier} - {result['message']}")
+                    # [FIX] GridEngine에 실패 알림 → 상태 복구
+                    self.grid_engine.confirm_order(
+                        signal=signal,
+                        order_id="",
+                        filled_qty=0,
+                        filled_price=0,
+                        success=False,
+                        error_message=result.get("message", "주문 실패")
+                    )
 
         except Exception as e:
             logger.error(f"매매 신호 처리 에러: {e}", exc_info=True)
@@ -772,7 +801,18 @@ class PhoenixTradingSystem:
             # 저장
             self.excel_bridge.save_workbook()
 
-            logger.debug(f"[SAVE] Excel 업데이트: 가격 ${current_price:.2f}, 포지션 {len(self.grid_engine.positions)}개")
+            # [v4.0] 상태 머신 상태 로깅
+            status = self.grid_engine.get_status()
+            state_summary = status.get('state_summary', {})
+            logger.debug(
+                f"[SAVE] Excel 업데이트: 가격 ${current_price:.2f}, "
+                f"포지션 {len(self.grid_engine.positions)}개 | "
+                f"상태머신[EMPTY:{state_summary.get('EMPTY',0)} "
+                f"FILLED:{state_summary.get('FILLED',0)} "
+                f"ORDERING:{state_summary.get('ORDERING',0)} "
+                f"PARTIAL:{state_summary.get('PARTIAL_FILLED',0)} "
+                f"ERROR:{state_summary.get('ERROR',0)}]"
+            )
 
         except Exception as e:
             logger.error(f"상태 업데이트 에러: {e}", exc_info=True)

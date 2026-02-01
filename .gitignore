@@ -48,6 +48,9 @@ backup*/
 .env
 *.log
 
+# Security - KIS API tokens (CRITICAL)
+kis_token_cache.json
+
 # Temporary files
 *.tmp
 *.bak
