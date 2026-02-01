@@ -412,12 +412,13 @@ class GridEngineV4:
             # 2. FILLED 상태로 전이
             if self.state_machine.mark_filled(tier, tier_qty, filled_price):
                 # 3. Position 추가
+                invested = tier_qty * filled_price
                 new_position = Position(
                     tier=tier,
-                    buy_price=filled_price,
                     quantity=tier_qty,
                     avg_price=filled_price,
-                    timestamp=datetime.now()
+                    invested_amount=invested,
+                    opened_at=datetime.now()
                 )
                 self.positions.append(new_position)
 

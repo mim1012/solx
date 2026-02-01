@@ -109,7 +109,7 @@ def test_race_condition_prevented(engine):
     # 최소 1개 Tier는 포함되어야 함 (테스트가 실제로 동작했는지 확인)
     assert len(all_tiers) >= 1, "매수 신호가 생성되지 않음"
 
-    print(f"[✓] C3 검증 통과: {len(all_tiers)}개 Tier, 중복 없음!")
+    print(f"[OK] C3 검증 통과: {len(all_tiers)}개 Tier, 중복 없음!")
 
 
 # ============================================
@@ -133,7 +133,7 @@ def test_invalid_price_rejected(engine):
     # 최소값 미만
     assert not engine._validate_order_quantity(1, 100, 0.001), "최소값 미만 차단 실패"
 
-    print("[✓] C4-1 검증 통과: 유효하지 않은 가격 차단!")
+    print("[OK] C4-1 검증 통과: 유효하지 않은 가격 차단!")
 
 
 def test_zero_quantity_rejected(engine):
@@ -147,7 +147,7 @@ def test_zero_quantity_rejected(engine):
     assert not engine._validate_order_quantity(1, 0, 45.0), "수량 0 차단 실패"
     assert not engine._validate_order_quantity(1, -5, 45.0), "음수 수량 차단 실패"
 
-    print("[✓] C4-2 검증 통과: 수량 0 차단!")
+    print("[OK] C4-2 검증 통과: 수량 0 차단!")
 
 
 def test_excessive_quantity_rejected(engine):
@@ -164,7 +164,7 @@ def test_excessive_quantity_rejected(engine):
     # 정상 범위는 통과
     assert engine._validate_order_quantity(1, 100, 45.0), "정상 수량 거부됨!"
 
-    print("[✓] C4-3 검증 통과: 비정상 수량 차단!")
+    print("[OK] C4-3 검증 통과: 비정상 수량 차단!")
 
 
 # ============================================
@@ -195,7 +195,7 @@ def test_gap_trading_batch_limit(engine):
     assert batch_count <= engine.MAX_BATCH_ORDERS, \
         f"배치 제한 초과! ({batch_count}개 > {engine.MAX_BATCH_ORDERS}개)"
 
-    print(f"[✓] C5 검증 통과: Gap 배치 {batch_count}개로 제한됨!")
+    print(f"[OK] C5 검증 통과: Gap 배치 {batch_count}개로 제한됨!")
 
 
 # ============================================
@@ -248,7 +248,7 @@ def test_partial_fill_tracking(engine):
     assert test_tier_state.state == TierState.PARTIAL_FILLED, \
         f"부분 체결 상태가 아님: {test_tier_state.state.value}"
 
-    print("[✓] H4 검증 통과: 부분 체결 추적됨!")
+    print("[OK] H4 검증 통과: 부분 체결 추적됨!")
 
 
 # ============================================
@@ -312,7 +312,7 @@ def test_full_scenario(engine):
     assert test_tier_state.state == TierState.EMPTY, f"매도 후 상태 오류: {test_tier_state.state}"
 
     print(f"[통합] 매도 완료: Tier {test_tier}, {sell_signal.quantity}주 @ ${sell_price:.2f}")
-    print("[✓] 통합 시나리오 통과!")
+    print("[OK] 통합 시나리오 통과!")
 
 
 # ============================================
