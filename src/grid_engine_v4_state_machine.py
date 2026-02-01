@@ -464,32 +464,26 @@ class GridEngineV4:
             # 2. SELLING 상태로
             self.state_machine.transition(tier, TierState.SELLING, order_id=order_id)
 
-            # 3. [FIX] 수익/원금 계산 (Position 정보 사용)
-            profit = (filled_price - pos.avg_price) * filled_qty
-            principal = pos.avg_price * filled_qty
+            # 3. [FIX] 수익/원금 계산 (각 Tier의 실제 수량 사용)
+            tier_qty = pos.quantity  # 이 Tier의 실제 보유 수량
+            profit = (filled_price - pos.avg_price) * tier_qty
+            principal = pos.avg_price * tier_qty
             total_proceeds = principal + profit
 
             # 4. [FIX] 잔고 복구 (Position 삭제 전!)
             self.account_balance += total_proceeds
 
             logger.info(
-                f"Tier {tier} 매도 체결: {filled_qty}주 @ ${filled_price:.2f} "
+                f"Tier {tier} 매도 체결: {tier_qty}주 @ ${filled_price:.2f} "
                 f"(원금: ${principal:.2f}, 수익: ${profit:.2f}, 합계: ${total_proceeds:.2f}, 주문번호: {order_id})"
             )
 
-            # 5. [FIX] 부분 체결 처리
-            if filled_qty < pos.quantity:
-                # 부분 매도: Position 수량 차감
-                pos.quantity -= filled_qty
-                logger.info(f"Tier {tier} 부분 매도: 남은 수량 {pos.quantity}주")
-                # FILLED 상태로 복귀 (추가 매도 가능)
-                self.state_machine.transition(tier, TierState.FILLED)
-            else:
-                # 전량 매도: Position 제거
-                self.positions = [p for p in self.positions if p.tier != tier]
-                # SOLD → EMPTY로 (재사용 가능)
-                self.state_machine.transition(tier, TierState.SOLD)
-                self.state_machine.transition(tier, TierState.EMPTY)
+            # 5. [FIX] 전량 매도 (배치 매도는 항상 전량 처리)
+            # 전량 매도: Position 제거
+            self.positions = [p for p in self.positions if p.tier != tier]
+            # SOLD → EMPTY로 (재사용 가능)
+            self.state_machine.transition(tier, TierState.SOLD)
+            self.state_machine.transition(tier, TierState.EMPTY)
 
     def update_tier1(self, current_price: float) -> Tuple[bool, Optional[float]]:
         """Tier 1 (High Water Mark) 갱신 로직"""
