@@ -393,29 +393,34 @@ class GridEngineV4:
                 logger.error(f"Tier {tier} 매수 실패: {error_message}")
             return
 
-        # [FIX] 배치 주문 수량 분배: 나머지를 첫 Tier에 할당
+        # [FIX] 배치 주문 수량 분배
         num_tiers = len(signal.tiers)
-        base_qty = filled_qty // num_tiers
-        remainder = filled_qty % num_tiers
+        # 원래 주문 수량 (signal.quantity)과 실제 체결 수량 (filled_qty) 분리
+        ordered_base_qty = signal.quantity // num_tiers
+        ordered_remainder = signal.quantity % num_tiers
+
+        filled_base_qty = filled_qty // num_tiers
+        filled_remainder = filled_qty % num_tiers
 
         total_filled = 0  # 검증용
 
         for idx, tier in enumerate(signal.tiers):
-            # [FIX] 첫 Tier에 나머지 할당
-            tier_qty = base_qty + (remainder if idx == 0 else 0)
+            # 각 Tier별 원래 주문 수량과 실제 체결 수량
+            tier_ordered_qty = ordered_base_qty + (ordered_remainder if idx == 0 else 0)
+            tier_filled_qty = filled_base_qty + (filled_remainder if idx == 0 else 0)
 
             # 1. ORDERING 상태로 전이 (원래 주문 수량 기록)
-            if not self.state_machine.mark_ordering(tier, order_id, tier_qty):
+            if not self.state_machine.mark_ordering(tier, order_id, tier_ordered_qty):
                 logger.warning(f"Tier {tier}: ORDERING 상태 전이 실패")
                 continue
 
-            # 2. FILLED 상태로 전이
-            if self.state_machine.mark_filled(tier, tier_qty, filled_price):
+            # 2. FILLED 또는 PARTIAL_FILLED 상태로 전이
+            if self.state_machine.mark_filled(tier, tier_filled_qty, filled_price):
                 # 3. Position 추가
-                invested = tier_qty * filled_price
+                invested = tier_filled_qty * filled_price
                 new_position = Position(
                     tier=tier,
-                    quantity=tier_qty,
+                    quantity=tier_filled_qty,
                     avg_price=filled_price,
                     invested_amount=invested,
                     opened_at=datetime.now()
@@ -423,11 +428,11 @@ class GridEngineV4:
                 self.positions.append(new_position)
 
                 # 4. 잔고 차감
-                self.account_balance -= tier_qty * filled_price
-                total_filled += tier_qty
+                self.account_balance -= tier_filled_qty * filled_price
+                total_filled += tier_filled_qty
 
                 logger.info(
-                    f"Tier {tier} 매수 체결: {tier_qty}주 @ ${filled_price:.2f} "
+                    f"Tier {tier} 매수 체결: {tier_filled_qty}/{tier_ordered_qty}주 @ ${filled_price:.2f} "
                     f"(주문번호: {order_id})"
                 )
 
@@ -487,7 +492,6 @@ class GridEngineV4:
 
     def update_tier1(self, current_price: float) -> Tuple[bool, Optional[float]]:
         """Tier 1 (High Water Mark) 갱신 로직"""
-        # 기존 로직 유지
         if not self.settings.tier1_auto_update:
             return False, None
 
@@ -495,13 +499,33 @@ class GridEngineV4:
             old_tier1 = self.tier1_price
             self.tier1_price = current_price
 
-            # 모든 Tier 재계산 필요
-            self._init_state_machine()
+            # [BUG FIX] 기존 상태를 보존하면서 가격만 재계산
+            # _init_state_machine()을 호출하면 모든 티어가 EMPTY로 리셋되어
+            # 진행 중인 주문(ORDERING, LOCKED)이나 보유 포지션(FILLED)이 사라짐
+            self._update_tier_prices()
 
             logger.info(f"Tier 1 갱신: ${old_tier1:.2f} → ${self.tier1_price:.2f}")
             return True, old_tier1
 
         return False, None
+
+    def _update_tier_prices(self):
+        """기존 상태를 보존하면서 모든 Tier의 가격만 재계산"""
+        with self.state_machine._lock:
+            for tier in range(1, self.settings.total_tiers + 1):
+                buy_price = self.calculate_tier_price(tier)
+                sell_price = buy_price * (1 + self.settings.sell_target)
+
+                tier_info = self.state_machine._tiers.get(tier)
+                if tier_info:
+                    # 가격만 갱신, 상태/주문정보는 보존
+                    tier_info.buy_price = buy_price
+                    tier_info.sell_price = sell_price
+                else:
+                    # 새 티어면 초기화
+                    self.state_machine.initialize_tier(tier, buy_price, sell_price)
+
+        logger.info(f"Tier 가격 재계산 완료 (상태 보존)")
 
     def get_status(self) -> dict:
         """[v4.0] 시스템 상태 조회 - 상태 머신 정보 포함"""
@@ -565,12 +589,13 @@ class GridEngineV4:
             return position
         else:
             # 포지션이 없으면 더미 생성 (하위 호환성)
+            qty = filled_qty // len(signal.tiers) if signal.tiers else filled_qty
             return Position(
                 tier=rep_tier,
-                buy_price=filled_price,
-                quantity=filled_qty // len(signal.tiers) if signal.tiers else filled_qty,
+                quantity=qty,
                 avg_price=filled_price,
-                timestamp=datetime.now()
+                invested_amount=qty * filled_price,
+                opened_at=datetime.now()
             )
 
     def execute_sell(

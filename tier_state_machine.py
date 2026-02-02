@@ -70,7 +70,7 @@ class TierStateMachine:
         TierState.SELLING: [TierState.SOLD, TierState.ERROR, TierState.FILLED],
         TierState.SOLD: [TierState.EMPTY],
         TierState.ERROR: [TierState.EMPTY, TierState.ORDERING],  # 재시도 가능
-        TierState.LOCKED: [TierState.EMPTY, TierState.FILLED, TierState.ORDERING, TierState.ERROR],  # [FIX] ORDERING, ERROR 추가
+        TierState.LOCKED: [TierState.EMPTY, TierState.ORDERING, TierState.ERROR],  # [FIX] FILLED 직접 전이 제거 (반드시 ORDERING 경유)
     }
 
     def __init__(self, total_tiers: int = 240):

@@ -291,12 +291,15 @@ def test_full_scenario(engine):
 
     print(f"\n[통합] 매수 완료: Tier {test_tier}, {qty}주 @ ${buy_price:.2f}")
 
-    # 3. 가격 상승 → 매도 조건 충족
-    sell_price = buy_price * 1.05  # 5% 상승
+    # 3. 가격 상승 → 매도 조건 충족 (모든 Tier의 sell_price 이상으로 상승)
+    #    Tier 1의 sell_price = tier1_price * 1.03 = $51.50이 가장 높으므로
+    #    그 이상으로 설정해야 모든 Tier가 매도됨
+    sell_price = engine.tier1_price * (1 + engine.settings.sell_target) + 1.0
     sell_signals = engine.process_tick(sell_price)
 
     sell_signal = next((s for s in sell_signals if s.action == "SELL"), None)
     assert sell_signal is not None, "매도 신호 없음"
+    assert test_tier in sell_signal.tiers, f"Tier {test_tier}가 매도 대상에 미포함"
 
     # 매도 확인
     engine.confirm_order(
