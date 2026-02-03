@@ -6,7 +6,19 @@
       "Bash(ls:*)",
       "Bash(find:*)",
       "Bash(git add:*)",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "Bash(git stash:*)",
+      "Bash(findstr:*)",
+      "Bash(git push)",
+      "Bash(git fetch:*)",
+      "Bash(git merge:*)",
+      "Bash(git push:*)",
+      "Bash(git status:*)",
+      "Bash(git archive:*)",
+      "Bash(unzip:*)",
+      "Bash(pyinstaller:*)",
+      "Bash(powershell -Command \"Compress-Archive -Path release/* -DestinationPath phoenix_trading_release.zip -Force\")",
+      "Bash(powershell -Command:*)"
     ],
     "deny": [],
     "ask": []
