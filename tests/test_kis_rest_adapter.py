@@ -100,11 +100,15 @@ class TestKisRestAdapter:
     # 1. 인증 테스트
     # =====================
 
+    @patch('src.kis_rest_adapter.Path.exists')
     @patch('src.kis_rest_adapter.requests.post')
-    def test_login_success(self, mock_post, adapter):
+    def test_login_success(self, mock_post, mock_path_exists, adapter):
         """로그인 성공 테스트 - Token + Approval Key 발급"""
+        # 토큰 캐시 파일 없음
+        mock_path_exists.return_value = False
+
         # Mock 응답 설정: login()은 2번의 POST 호출
-        # 1) /oauth2/token - 토큰 발급
+        # 1) /oauth2/tokenP - 토큰 발급
         token_resp = Mock()
         token_resp.status_code = 200
         token_resp.json.return_value = {
@@ -121,8 +125,9 @@ class TestKisRestAdapter:
 
         mock_post.side_effect = [token_resp, approval_resp]
 
-        # 로그인 실행
-        result = adapter.login()
+        # 로그인 실행 (토큰 캐시 저장 mock)
+        with patch('builtins.open', MagicMock()):
+            result = adapter.login()
 
         # 검증
         assert result is True
@@ -140,9 +145,13 @@ class TestKisRestAdapter:
         # 2번째 호출: secretkey 포함
         assert "secretkey" in mock_post.call_args_list[1][1]["json"]
 
+    @patch('src.kis_rest_adapter.Path.exists')
     @patch('src.kis_rest_adapter.requests.post')
-    def test_login_failure(self, mock_post, adapter):
+    def test_login_failure(self, mock_post, mock_path_exists, adapter):
         """로그인 실패 테스트"""
+        # 토큰 캐시 파일 없음
+        mock_path_exists.return_value = False
+
         # Mock 응답 설정 (401 Unauthorized)
         mock_response = Mock()
         mock_response.status_code = 401
@@ -399,13 +408,14 @@ class TestKisRestAdapter:
         adapter.access_token = "test_token"
         adapter.token_expires_at = datetime.now() + timedelta(hours=1)
 
-        # Mock 응답 설정
+        # Mock 응답 설정 (실제 API 응답 형식: output2가 dict)
         mock_response = Mock()
         mock_response.status_code = 200
         mock_response.json.return_value = {
             "rt_cd": "0",
+            "output1": [],
             "output2": {
-                "frcr_dncl_amt_2": "5000.50"
+                "frcr_drwg_psbl_amt_1": "5000.50"  # 실제 필드명
             }
         }
         mock_get.return_value = mock_response
@@ -473,13 +483,14 @@ class TestKisRestAdapter:
         adapter.access_token = "test_token"
         adapter.token_expires_at = datetime.now() + timedelta(hours=1)
 
-        # Mock 응답 설정
+        # Mock 응답 설정 (실제 API 응답 형식)
         mock_response = Mock()
         mock_response.status_code = 200
         mock_response.json.return_value = {
             "rt_cd": "0",
+            "output1": [],
             "output2": {
-                "frcr_dncl_amt_2": "10000.00"
+                "frcr_drwg_psbl_amt_1": "10000.00"  # 실제 필드명
             }
         }
         mock_get.return_value = mock_response
@@ -541,16 +552,20 @@ class TestKisRestAdapter:
     # 6. 토큰 갱신 테스트
     # =====================
 
+    @patch('src.kis_rest_adapter.Path.exists')
     @patch('src.kis_rest_adapter.requests.post')
-    def test_token_refresh(self, mock_post, adapter):
+    def test_token_refresh(self, mock_post, mock_path_exists, adapter):
         """🔥 토큰 자동 갱신 테스트 - Token + Approval Key 모두 갱신"""
+        # 토큰 캐시 파일 없음
+        mock_path_exists.return_value = False
+
         # 만료 임박 토큰 설정 (4분 후 만료)
         adapter.access_token = "old_token"
         adapter.approval_key = "old_approval"
         adapter.token_expires_at = datetime.now() + timedelta(minutes=4)
 
         # Mock 응답 설정: login()은 2번의 POST 호출
-        # 1) /oauth2/token - 새 토큰 발급
+        # 1) /oauth2/tokenP - 새 토큰 발급
         token_resp = Mock()
         token_resp.status_code = 200
         token_resp.json.return_value = {
@@ -568,17 +583,22 @@ class TestKisRestAdapter:
         mock_post.side_effect = [token_resp, approval_resp]
 
         # _get_headers 호출 (내부에서 토큰 갱신 트리거)
-        headers = adapter._get_headers(tr_id="TEST_TR_ID")
+        with patch('builtins.open', MagicMock()):  # 토큰 캐시 저장 mock
+            headers = adapter._get_headers(tr_id="TEST_TR_ID")
 
         # 검증
         assert adapter.access_token == "new_token_67890"
         assert adapter.approval_key == "new_approval_xyz"  # 🔥 Approval Key도 갱신됨
         assert "Bearer new_token_67890" in headers["authorization"]
 
+    @patch('src.kis_rest_adapter.Path.exists')
     @patch('src.kis_rest_adapter.requests.get')
     @patch('src.kis_rest_adapter.requests.post')
-    def test_api_call_with_expired_token(self, mock_post, mock_get, adapter):
+    def test_api_call_with_expired_token(self, mock_post, mock_get, mock_path_exists, adapter):
         """🔥 만료 토큰 자동 갱신 후 API 호출 성공 시나리오"""
+        # 토큰 캐시 파일 없음
+        mock_path_exists.return_value = False
+
         # 만료 임박 토큰 설정 (3분 후 만료 - 5분 임계값 이하)
         adapter.access_token = "expired_token"
         adapter.token_expires_at = datetime.now() + timedelta(minutes=3)
@@ -606,7 +626,8 @@ class TestKisRestAdapter:
         mock_get.return_value = price_resp
 
         # 시세 조회 실행 (내부에서 자동 토큰 갱신 발생)
-        result = adapter.get_overseas_price("SOXL")
+        with patch('builtins.open', MagicMock()):  # 토큰 캐시 저장 mock
+            result = adapter.get_overseas_price("SOXL")
 
         # 검증
         assert result is not None
