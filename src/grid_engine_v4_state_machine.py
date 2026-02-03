@@ -55,13 +55,14 @@ class GridEngineV4:
             settings: 그리드 시스템 설정
         """
         self.settings = settings
-        self.positions: List[Position] = []
         self.tier1_price: float = settings.tier1_price
         self.current_price: float = 0.0
-        self.account_balance: float = settings.investment_usd
 
-        # [v4.0] 상태 머신 초기화
-        self.state_machine = TierStateMachine(total_tiers=settings.total_tiers)
+        # [v4.1] 상태 머신이 잔고와 포지션의 단일 데이터 소스
+        self.state_machine = TierStateMachine(
+            total_tiers=settings.total_tiers,
+            account_balance=settings.investment_usd
+        )
         self._process_lock = threading.RLock()  # process_tick 동시 호출 방지
         self._init_state_machine()
 
@@ -69,18 +70,35 @@ class GridEngineV4:
         if settings.ticker != "SOXL":
             raise ValueError(f"지원하지 않는 종목: {settings.ticker}. SOXL만 지원합니다.")
 
-        logger.info(f"[v4.0] GridEngine 초기화 완료 (State Machine Edition)")
+        logger.info(f"[v4.1] GridEngine 초기화 완료 (State Machine Consolidated)")
         logger.info(f"  - 최대 배치 주문: {self.MAX_BATCH_ORDERS}개")
         logger.info(f"  - 주문 수량 상한: {self.MAX_ORDER_QUANTITY:,}주")
 
     def _init_state_machine(self):
-        """상태 머신 초기화 - 모든 Tier 설정"""
+        """
+        상태 머신 초기화 - 모든 Tier 설정
+
+        [v4.1] FILLED 상태 Tier는 보존하고, EMPTY Tier만 가격 재계산
+        """
+        preserved = 0
         for tier in range(1, self.settings.total_tiers + 1):
             buy_price = self.calculate_tier_price(tier)
             sell_price = buy_price * (1 + self.settings.sell_target)
-            self.state_machine.initialize_tier(tier, buy_price, sell_price)
 
-        logger.info(f"상태 머신: {self.settings.total_tiers}개 Tier 초기화 완료")
+            # [v4.1] FILLED 상태 Tier 보존 (update_tier1 재호출 시)
+            existing = self.state_machine.get_tier(tier)
+            if existing and existing.state == TierState.FILLED and existing.quantity > 0:
+                # 가격만 업데이트하고 상태/포지션 정보는 보존
+                with self.state_machine._lock:
+                    real_tier = self.state_machine._tiers.get(tier)
+                    if real_tier:
+                        real_tier.buy_price = buy_price
+                        real_tier.sell_price = sell_price
+                preserved += 1
+            else:
+                self.state_machine.initialize_tier(tier, buy_price, sell_price)
+
+        logger.info(f"상태 머신: {self.settings.total_tiers}개 Tier 초기화 완료 (보존: {preserved}개)")
 
     def calculate_tier_price(self, tier: int) -> float:
         """
@@ -214,7 +232,7 @@ class GridEngineV4:
 
     def _process_sell_batch(self, current_price: float) -> Optional[TradeSignal]:
         """
-        매도 배치 처리
+        [v4.1] 매도 배치 처리 - 상태머신에서 포지션 정보 조회
 
         Args:
             current_price: 현재가
@@ -224,21 +242,19 @@ class GridEngineV4:
         """
         sell_batch = []  # (tier, quantity, avg_price)
 
-        # 체결 완료 상태인 Tier만 매도 대상
-        filled_tiers = self.state_machine.get_tiers_by_state(TierState.FILLED)
+        # [v4.1] 상태머신에서 FILLED + quantity > 0 인 Tier 조회
+        filled_tiers = self.state_machine.get_filled_tiers()
 
         for tier_info in sorted(filled_tiers, key=lambda t: t.tier_id, reverse=True):
             tier = tier_info.tier_id
             sell_price = tier_info.sell_price
 
             if current_price >= sell_price:
-                # 해당 Position 찾기
-                pos = next((p for p in self.positions if p.tier == tier), None)
-                if pos:
-                    sell_batch.append((tier, pos.quantity, pos.avg_price))
-                    actual_profit_rate = (current_price - pos.avg_price) / pos.avg_price
+                if tier_info.quantity > 0:
+                    sell_batch.append((tier, tier_info.quantity, tier_info.avg_price))
+                    actual_profit_rate = (current_price - tier_info.avg_price) / tier_info.avg_price if tier_info.avg_price > 0 else 0
                     logger.debug(
-                        f"매도 배치 추가: Tier {tier}, {pos.quantity}주 "
+                        f"매도 배치 추가: Tier {tier}, {tier_info.quantity}주 "
                         f"(실제수익률: {actual_profit_rate:.2%})"
                     )
 
@@ -317,8 +333,8 @@ class GridEngineV4:
             total_qty = sum(qty for _, qty in buy_batch)
             total_cost = total_qty * current_price
 
-            # 잔고 확인
-            if self.account_balance >= total_cost:
+            # [v4.1] 잔고 확인 (상태머신에서 관리)
+            if self.state_machine.account_balance >= total_cost:
                 tiers = tuple(tier for tier, _ in buy_batch)
 
                 signal = TradeSignal(
@@ -335,10 +351,10 @@ class GridEngineV4:
                 )
                 return signal
             else:
-                # [v4.0 FIX] 잔고 부족 시 Lock 해제
+                # [v4.1] 잔고 부족 시 Lock 해제
                 logger.warning(
                     f"잔고 부족으로 배치 매수 중단: "
-                    f"필요=${total_cost:.2f}, 잔고=${self.account_balance:.2f}"
+                    f"필요=${total_cost:.2f}, 잔고=${self.state_machine.account_balance:.2f}"
                 )
                 for tier, _ in buy_batch:
                     self.state_machine.unlock(tier, TierState.EMPTY)
@@ -416,19 +432,8 @@ class GridEngineV4:
 
             # 2. FILLED 또는 PARTIAL_FILLED 상태로 전이
             if self.state_machine.mark_filled(tier, tier_filled_qty, filled_price):
-                # 3. Position 추가
-                invested = tier_filled_qty * filled_price
-                new_position = Position(
-                    tier=tier,
-                    quantity=tier_filled_qty,
-                    avg_price=filled_price,
-                    invested_amount=invested,
-                    opened_at=datetime.now()
-                )
-                self.positions.append(new_position)
-
-                # 4. 잔고 차감
-                self.account_balance -= tier_filled_qty * filled_price
+                # 3. [v4.1] 상태머신에서 포지션 정보 + 잔고 차감 원자적 처리
+                self.state_machine.fill_tier(tier, tier_filled_qty, filled_price)
                 total_filled += tier_filled_qty
 
                 logger.info(
@@ -460,33 +465,24 @@ class GridEngineV4:
             return
 
         for tier in signal.tiers:
-            # 1. [FIX] Position 정보를 먼저 읽기 (삭제 전!)
-            pos = next((p for p in self.positions if p.tier == tier), None)
-            if not pos:
+            # 1. [v4.1] 상태머신에서 포지션 정보 조회
+            tier_info = self.state_machine.get_tier(tier)
+            if not tier_info or tier_info.quantity <= 0:
                 logger.warning(f"Tier {tier} 매도 대상 포지션 없음")
                 continue
 
             # 2. SELLING 상태로
             self.state_machine.transition(tier, TierState.SELLING, order_id=order_id)
 
-            # 3. [FIX] 수익/원금 계산 (각 Tier의 실제 수량 사용)
-            tier_qty = pos.quantity  # 이 Tier의 실제 보유 수량
-            profit = (filled_price - pos.avg_price) * tier_qty
-            principal = pos.avg_price * tier_qty
-            total_proceeds = principal + profit
-
-            # 4. [FIX] 잔고 복구 (Position 삭제 전!)
-            self.account_balance += total_proceeds
+            # 3. [v4.1] 상태머신에서 잔고 복구 + 포지션 초기화 원자적 처리
+            profit, total_proceeds = self.state_machine.sell_tier(tier, filled_price)
 
             logger.info(
-                f"Tier {tier} 매도 체결: {tier_qty}주 @ ${filled_price:.2f} "
-                f"(원금: ${principal:.2f}, 수익: ${profit:.2f}, 합계: ${total_proceeds:.2f}, 주문번호: {order_id})"
+                f"Tier {tier} 매도 체결: {tier_info.quantity}주 @ ${filled_price:.2f} "
+                f"(수익: ${profit:.2f}, 합계: ${total_proceeds:.2f}, 주문번호: {order_id})"
             )
 
-            # 5. [FIX] 전량 매도 (배치 매도는 항상 전량 처리)
-            # 전량 매도: Position 제거
-            self.positions = [p for p in self.positions if p.tier != tier]
-            # SOLD → EMPTY로 (재사용 가능)
+            # 4. SOLD → EMPTY로 (재사용 가능)
             self.state_machine.transition(tier, TierState.SOLD)
             self.state_machine.transition(tier, TierState.EMPTY)
 
@@ -528,12 +524,13 @@ class GridEngineV4:
         logger.info(f"Tier 가격 재계산 완료 (상태 보존)")
 
     def get_status(self) -> dict:
-        """[v4.0] 시스템 상태 조회 - 상태 머신 정보 포함"""
+        """[v4.1] 시스템 상태 조회 - 상태 머신 정보 포함"""
+        totals = self.state_machine.get_total_positions(self.current_price)
         return {
             'tier1_price': self.tier1_price,
             'current_price': self.current_price,
-            'account_balance': self.account_balance,
-            'total_positions': len(self.positions),
+            'account_balance': self.state_machine.account_balance,
+            'total_positions': totals['position_count'],
             'state_summary': {
                 'EMPTY': len(self.state_machine.get_tiers_by_state(TierState.EMPTY)),
                 'ORDERING': len(self.state_machine.get_tiers_by_state(TierState.ORDERING)),
@@ -542,6 +539,66 @@ class GridEngineV4:
                 'ERROR': len(self.state_machine.get_tiers_by_state(TierState.ERROR)),
             }
         }
+
+    # ============================================
+    # [v4.1] 하위 호환성 프로퍼티
+    # ============================================
+
+    @property
+    def positions(self) -> List[Position]:
+        """
+        [v4.1 호환성] 상태머신에서 Position 리스트 생성
+        phoenix_main.py 등에서 engine.positions 접근 시 호환성 유지
+        """
+        filled_tiers = self.state_machine.get_filled_tiers()
+        return [
+            Position(
+                tier=t.tier_id,
+                quantity=t.quantity,
+                avg_price=t.avg_price,
+                invested_amount=t.invested_amount,
+                opened_at=t.opened_at or datetime.now()
+            )
+            for t in filled_tiers
+        ]
+
+    @positions.setter
+    def positions(self, value):
+        """
+        [v4.1 호환성] positions 설정 시 상태머신에 반영
+        테스트 등에서 engine.positions = [...] 할 때 호환성 유지
+        """
+        # 기존 FILLED Tier 모두 초기화
+        for tier_id, tier in list(self.state_machine._tiers.items()):
+            if tier.state == TierState.FILLED:
+                with self.state_machine._lock:
+                    tier.state = TierState.EMPTY
+                    tier.quantity = 0
+                    tier.avg_price = 0.0
+                    tier.invested_amount = 0.0
+                    tier.opened_at = None
+
+        # 새 positions 반영
+        for pos in value:
+            tier_info = self.state_machine.get_tier(pos.tier)
+            if tier_info:
+                with self.state_machine._lock:
+                    real_tier = self.state_machine._tiers[pos.tier]
+                    real_tier.state = TierState.FILLED
+                    real_tier.quantity = pos.quantity
+                    real_tier.avg_price = pos.avg_price
+                    real_tier.invested_amount = pos.invested_amount
+                    real_tier.opened_at = pos.opened_at
+
+    @property
+    def account_balance(self) -> float:
+        """[v4.1 호환성] 잔고는 상태머신에서 관리"""
+        return self.state_machine.account_balance
+
+    @account_balance.setter
+    def account_balance(self, value: float):
+        """[v4.1 호환성] 잔고 설정 시 상태머신에 반영"""
+        self.state_machine.account_balance = value
 
     # ============================================
     # 하위 호환성 메서드 (Phoenix Main 연동용)
@@ -581,12 +638,18 @@ class GridEngineV4:
             success=True
         )
 
-        # 대표 Tier 포지션 반환
+        # [v4.1] 대표 Tier 포지션 반환 (상태머신에서 조회)
         rep_tier = signal.tiers[0] if signal.tiers else signal.tier
-        position = next((p for p in self.positions if p.tier == rep_tier), None)
+        tier_info = self.state_machine.get_tier(rep_tier)
 
-        if position:
-            return position
+        if tier_info and tier_info.quantity > 0:
+            return Position(
+                tier=rep_tier,
+                quantity=tier_info.quantity,
+                avg_price=tier_info.avg_price,
+                invested_amount=tier_info.invested_amount,
+                opened_at=tier_info.opened_at or datetime.now()
+            )
         else:
             # 포지션이 없으면 더미 생성 (하위 호환성)
             qty = filled_qty // len(signal.tiers) if signal.tiers else filled_qty
@@ -618,12 +681,12 @@ class GridEngineV4:
         filled_price = actual_filled_price if actual_filled_price is not None else signal.price
         filled_qty = actual_filled_qty if actual_filled_qty is not None else signal.quantity
 
-        # 수익 계산 (매도 전에)
+        # [v4.1] 수익 계산 (매도 전에, 상태머신에서 조회)
         profit = 0.0
         for tier in (signal.tiers or [signal.tier]):
-            pos = next((p for p in self.positions if p.tier == tier), None)
-            if pos:
-                profit += (filled_price - pos.avg_price) * pos.quantity
+            tier_info = self.state_machine.get_tier(tier)
+            if tier_info and tier_info.quantity > 0:
+                profit += (filled_price - tier_info.avg_price) * tier_info.quantity
 
         # 더미 order_id
         order_id = f"COMPAT_SELL_{signal.tier}_{datetime.now().strftime('%H%M%S')}"
@@ -651,15 +714,16 @@ class GridEngineV4:
         """
         self.current_price = current_price
 
-        # 집계 계산
-        total_quantity = sum(pos.quantity for pos in self.positions)
-        total_invested = sum(pos.quantity * pos.avg_price for pos in self.positions)
+        # [v4.1] 상태머신에서 집계
+        totals = self.state_machine.get_total_positions(current_price)
 
-        # 주식 평가액
-        stock_value = sum(pos.current_value(current_price) for pos in self.positions)
+        total_quantity = totals['total_quantity']
+        total_invested = totals['total_invested']
+        stock_value = totals['stock_value']
+        balance = totals['account_balance']
 
         # 총 자산
-        equity = self.account_balance + stock_value
+        equity = balance + stock_value
 
         # 수익금/수익률
         total_profit = equity - self.settings.investment_usd
@@ -672,7 +736,7 @@ class GridEngineV4:
             current_price=current_price,
             tier1_price=self.tier1_price,
             current_tier=current_tier,
-            account_balance=self.account_balance,
+            account_balance=balance,
             total_quantity=total_quantity,
             total_invested=total_invested,
             stock_value=stock_value,
