@@ -41,6 +41,26 @@ DEFAULT_TOTAL_TIERS = 240      # 240개 티어
 DEFAULT_TIER1_TRADING_ENABLED = False  # Tier 1 거래 비활성화 (기본)
 DEFAULT_TIER1_BUY_PERCENT = 0.0        # Tier 1 매수% (정확히 일치)
 
+# ====== 미국 장시간 설정 (한국 시간 기준) ======
+# 서머타임 (EDT, 3월~11월): 미국 동부시간 +13시간 = 한국 시간
+MARKET_HOURS_EDT = {
+    "regular_open": (22, 30),    # 정규장 개장 (한국 22:30 = 미국 09:30)
+    "regular_close": (5, 0),     # 정규장 마감 (한국 05:00 = 미국 16:00)
+    "premarket_start": 17,       # 프리마켓 시작 (한국 17:00 = 미국 04:00)
+    "aftermarket_end": 7,        # 애프터마켓 종료 (한국 07:00 = 미국 18:00)
+}
+# 표준시 (EST, 11월~3월): 미국 동부시간 +14시간 = 한국 시간
+MARKET_HOURS_EST = {
+    "regular_open": (23, 30),    # 정규장 개장 (한국 23:30 = 미국 09:30)
+    "regular_close": (6, 0),     # 정규장 마감 (한국 06:00 = 미국 16:00)
+    "premarket_start": 18,       # 프리마켓 시작 (한국 18:00 = 미국 04:00)
+    "aftermarket_end": 7,        # 애프터마켓 종료 (한국 07:00 = 미국 18:00)
+}
+
+# 프리마켓/애프터마켓 거래 허용 여부
+ENABLE_PREMARKET = True   # True: 프리마켓 시간에도 거래
+ENABLE_AFTERMARKET = True # True: 애프터마켓 시간에도 거래
+
 # 시스템 설정
 UPDATE_INTERVAL = 1.0          # 상태 업데이트 간격 (초)
 DAILY_SUMMARY_INTERVAL = 3600  # 일일 요약 간격 (초, 1시간)

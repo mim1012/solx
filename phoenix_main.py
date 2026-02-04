@@ -131,17 +131,7 @@ class PhoenixTradingSystem:
     def _is_market_open(self) -> tuple[bool, str]:
         """
         미국 주식 시장 개장 여부 확인 (한국 시간 기준, 서머타임 반영)
-
-        [KIS API 공식 문서 기준]
-        미국 정규장: 월~금 09:30~16:00 (미국 동부시간)
-
-        한국 시간 변환:
-        - 표준시 (EST, 11월~3월): 23:30 ~ 06:00 (시차 14시간)
-        - 서머타임 (EDT, 3월~11월): 22:30 ~ 05:00 (시차 13시간)
-
-        프리마켓/애프터마켓: 주문 불가
-        - 프리마켓: 표준시 18:00~23:30, 서머타임 17:00~22:30
-        - 애프터마켓: 표준시 06:00~07:00, 서머타임 05:00~07:00
+        config.py의 MARKET_HOURS_EDT / MARKET_HOURS_EST 설정을 사용합니다.
 
         Returns:
             tuple[bool, str]: (개장 여부, 메시지)
@@ -152,21 +142,18 @@ class PhoenixTradingSystem:
         hour = now.hour
         minute = now.minute
 
-        # 거래시간 설정 (서머타임 반영)
+        # config.py에서 거래시간 설정 로드
         if is_dst:
-            # 서머타임: 22:30 ~ 05:00 (정규장)
-            open_hour, open_minute = 22, 30
-            close_hour, close_minute = 5, 0
-            premarket_start = 17  # 프리마켓 시작
-            aftermarket_end = 7   # 애프터마켓 종료
+            hours = config.MARKET_HOURS_EDT
             season = "서머타임(EDT)"
         else:
-            # 표준시: 23:30 ~ 06:00 (정규장)
-            open_hour, open_minute = 23, 30
-            close_hour, close_minute = 6, 0
-            premarket_start = 18  # 프리마켓 시작
-            aftermarket_end = 7   # 애프터마켓 종료
+            hours = config.MARKET_HOURS_EST
             season = "표준시(EST)"
+
+        open_hour, open_minute = hours["regular_open"]
+        close_hour, close_minute = hours["regular_close"]
+        premarket_start = hours["premarket_start"]
+        aftermarket_end = hours["aftermarket_end"]
 
         # 주말 체크 (미국 시간 기준)
         if weekday == 5 and (hour > close_hour or (hour == close_hour and minute > close_minute)):
@@ -184,59 +171,40 @@ class PhoenixTradingSystem:
             next_open = now.replace(hour=open_hour, minute=open_minute, second=0, microsecond=0)
             return False, f"주말입니다. 다음 개장: {next_open.strftime('%H:%M')} ({season})"
 
-        # 정규장 시간 체크 (서머타임 반영)
-        if is_dst:
-            # 서머타임: 22:30 ~ 05:00
+        # 정규장 시간 체크
+        if close_hour < open_hour:
+            # 자정을 넘기는 경우 (예: 22:30 ~ 05:00, 23:30 ~ 06:00)
             is_open = (
-                (hour == 22 and minute >= 30) or
-                (hour == 23) or
-                (hour < 5) or
-                (hour == 5 and minute == 0)
+                (hour > open_hour or (hour == open_hour and minute >= open_minute)) or
+                (hour < close_hour) or
+                (hour == close_hour and minute == 0)
             )
         else:
-            # 표준시: 23:30 ~ 06:00
             is_open = (
-                (hour == 23 and minute >= 30) or
-                (hour < 6) or
-                (hour == 6 and minute == 0)
+                (hour > open_hour or (hour == open_hour and minute >= open_minute)) and
+                (hour < close_hour or (hour == close_hour and minute == 0))
             )
 
         if is_open:
             return True, f"정규장 개장 중 ({season})"
 
-        # KIS API 문서: 프리마켓/애프터마켓 시간대에도 주문 가능
-        # 프리마켓 시간대 (주문 가능)
-        if is_dst:
-            # 서머타임: 17:00 ~ 22:29
+        # 프리마켓 시간대
+        if config.ENABLE_PREMARKET:
             in_premarket = (
-                (hour >= 17 and hour < 22) or
-                (hour == 22 and minute < 30)
+                (hour >= premarket_start and hour < open_hour) or
+                (hour == open_hour and minute < open_minute)
             )
-        else:
-            # 표준시: 18:00 ~ 23:29
-            in_premarket = (
-                (hour >= 18 and hour < 23) or
-                (hour == 23 and minute < 30)
-            )
+            if in_premarket:
+                return True, f"프리마켓 시간 (주문 가능) - 정규장: {open_hour:02d}:{open_minute:02d} ({season})"
 
-        if in_premarket:
-            return True, f"프리마켓 시간 (주문 가능) - 정규장: {open_hour:02d}:{open_minute:02d} ({season})"
-
-        # 애프터마켓 시간대 (주문 가능)
-        if is_dst:
-            # 서머타임: 05:01 ~ 07:00
+        # 애프터마켓 시간대
+        if config.ENABLE_AFTERMARKET:
             in_aftermarket = (
-                (hour == 5 and minute > 0) or
-                (hour == 6)
+                (hour > close_hour or (hour == close_hour and minute > 0)) and
+                (hour < aftermarket_end or (hour == aftermarket_end and minute == 0))
             )
-        else:
-            # 표준시: 06:01 ~ 07:00
-            in_aftermarket = (
-                (hour == 6 and minute > 0)
-            )
-
-        if in_aftermarket:
-            return True, f"애프터마켓 시간 (주문 가능) - 다음 정규장: {open_hour:02d}:{open_minute:02d} ({season})"
+            if in_aftermarket:
+                return True, f"애프터마켓 시간 (주문 가능) - 다음 정규장: {open_hour:02d}:{open_minute:02d} ({season})"
 
         # 기타 시간 (장 마감)
         next_open = now.replace(hour=open_hour, minute=open_minute, second=0, microsecond=0)

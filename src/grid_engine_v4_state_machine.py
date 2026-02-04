@@ -11,7 +11,7 @@ Phoenix Grid Engine v4.0 - State Machine Edition
 """
 
 from typing import List, Optional, Tuple
-from datetime import datetime
+from datetime import datetime, timedelta
 from math import floor
 from dataclasses import replace
 import logging
@@ -64,6 +64,8 @@ class GridEngineV4:
             account_balance=settings.investment_usd
         )
         self._process_lock = threading.RLock()  # process_tick 동시 호출 방지
+        self._buy_cooldown_until: Optional[datetime] = None  # 잔고 부족 시 매수 재시도 쿨다운
+        self._last_known_balance: float = 0.0  # 쿨다운 설정 시점의 잔고
         self._init_state_machine()
 
         # 검증
@@ -290,6 +292,19 @@ class GridEngineV4:
         Returns:
             매수 신호 (없으면 None)
         """
+        # [FIX] 잔고 부족 쿨다운 체크 - 잔고가 변하지 않으면 재시도 안 함
+        if self._buy_cooldown_until is not None:
+            balance_changed = self.state_machine.account_balance != self._last_known_balance
+            cooldown_expired = datetime.now() >= self._buy_cooldown_until
+            if balance_changed or cooldown_expired:
+                self._buy_cooldown_until = None  # 쿨다운 해제
+                logger.info(
+                    f"매수 쿨다운 해제 "
+                    f"({'잔고 변동' if balance_changed else '시간 만료'})"
+                )
+            else:
+                return None  # 쿨다운 중 - 조용히 스킵
+
         buy_batch = []  # (tier, quantity)
         start_tier = 1 if self.settings.tier1_trading_enabled else 2
 
@@ -351,14 +366,19 @@ class GridEngineV4:
                 )
                 return signal
             else:
-                # [v4.1] 잔고 부족 시 Lock 해제
+                # [v4.1] 잔고 부족 시 Lock 해제 + 쿨다운 설정
                 logger.warning(
                     f"잔고 부족으로 배치 매수 중단: "
-                    f"필요=${total_cost:.2f}, 잔고=${self.state_machine.account_balance:.2f}"
+                    f"필요=${total_cost:.2f}, 잔고=${self.state_machine.account_balance:.2f} "
+                    f"(매도 체결 또는 5분 후 재시도)"
                 )
                 for tier, _ in buy_batch:
                     self.state_machine.unlock(tier, TierState.EMPTY)
                     logger.debug(f"Tier {tier} Lock 해제 (잔고 부족)")
+
+                # [FIX] 쿨다운 설정 - 잔고가 바뀌거나 5분 후에 재시도
+                self._buy_cooldown_until = datetime.now() + timedelta(minutes=5)
+                self._last_known_balance = self.state_machine.account_balance
 
         return None
 
