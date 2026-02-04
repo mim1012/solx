@@ -31,6 +31,11 @@ EXCEL_TEMPLATE_PATH = PROJECT_ROOT / EXCEL_TEMPLATE_NAME
 TICKER = "SOXL"  # 고정 종목
 MARKET = "US"    # 미국 주식
 
+# 미국 시장 설정
+US_MARKET_EXCHANGE = "AMS"  # SOXL 거래소: AMS (아멕스), 다른 종목: NAS (나스닥), NYS (뉴욕증권거래소)
+US_MARKET_CURRENCY = "USD"  # 거래 통화
+US_MARKET_TIMEZONE = "America/New_York"  # 미국 동부 시간대
+
 # 그리드 파라미터 (기본값, Excel에서 오버라이드 가능)
 DEFAULT_SEED_RATIO = 0.05      # 5% 시드 비율
 DEFAULT_BUY_INTERVAL = 0.005   # 0.5% 매수 간격
@@ -76,18 +81,22 @@ TELEGRAM_TIMEOUT = 10       # 텔레그램 타임아웃 (초)
 
 # [v4.1] 한국투자증권(KIS) REST API 설정 (64비트 Python 지원, 해외주식 지원)
 # 환경 변수 우선, 없으면 빈 값
-KIS_APP_KEY = os.getenv("KIS_APP_KEY", "")        # KIS 개발자센터에서 발급받은 앱 키
-KIS_APP_SECRET = os.getenv("KIS_APP_SECRET", "")  # KIS 개발자센터에서 발급받은 앱 시크릿
-KIS_ACCOUNT_NO = os.getenv("KIS_ACCOUNT_NO", "")  # 계좌번호 (예: 12345678-01)
+KIS_APP_KEY = os.getenv("KIS_APP_KEY", os.getenv("KIWOOM_APP_KEY", ""))        # KIS 개발자센터에서 발급받은 앱 키
+KIS_APP_SECRET = os.getenv("KIS_APP_SECRET", os.getenv("KIWOOM_APP_SECRET", ""))  # KIS 개발자센터에서 발급받은 앱 시크릿
+KIS_ACCOUNT_NO = os.getenv("KIS_ACCOUNT_NO", os.getenv("KIWOOM_ACCOUNT_NO", ""))  # 계좌번호 (예: 12345678-01)
+
+# KIS API 모드 설정 (실전/모의투자)
+KIS_API_MODE = os.getenv("KIS_API_MODE", "REAL")  # REAL: 실전, PAPER: 모의투자
+KIS_API_BASE_URL = "https://openapi.koreainvestment.com:9443" if KIS_API_MODE == "REAL" else "https://openapivts.koreainvestment.com:29443"
 
 # 경고 설정
 WARNING_BALANCE_THRESHOLD = 100.0  # 잔고 경고 임계값 (USD)
 WARNING_POSITION_COUNT = 200       # 포지션 수 경고 임계값
 
 # 버전 정보
-VERSION = "4.0.0"
-VERSION_DATE = "2026-01-18"
-DESCRIPTION = "Phoenix Grid Trading System with REST API (64-bit Python Support)"
+VERSION = "4.1.0"
+VERSION_DATE = "2026-02-04"
+DESCRIPTION = "Phoenix Grid Trading System v4.1 with US Market Config & Balance Fix"
 
 # 개발 모드
 DEBUG_MODE = False  # True로 설정 시 상세 로그 출력
@@ -109,9 +118,10 @@ def validate_config():
         errors.append(f"Excel 템플릿을 찾을 수 없음: {EXCEL_TEMPLATE_PATH}")
         errors.append("create_excel_template.py를 실행하여 템플릿을 생성하세요.")
 
-    # 종목 코드 검증
-    if TICKER != "SOXL":
-        errors.append(f"지원하지 않는 종목: {TICKER}. SOXL만 지원합니다.")
+    # 종목 코드 검증 (환경 변수 우선)
+    ticker = os.getenv("US_MARKET_TICKER", TICKER)
+    if ticker != "SOXL":
+        errors.append(f"지원하지 않는 종목: {ticker}. SOXL만 지원합니다.")
 
     # KIS REST API 자격 증명 검증
     if not KIS_APP_KEY:
@@ -121,6 +131,11 @@ def validate_config():
     if not KIS_ACCOUNT_NO:
         errors.append("KIS_ACCOUNT_NO가 필요합니다. 환경 변수 또는 .env 파일에 설정하세요.")
 
+    # 미국 시장 설정 검증
+    exchange = os.getenv("US_MARKET_EXCHANGE", US_MARKET_EXCHANGE)
+    if exchange not in ["AMS", "NAS", "NYS"]:
+        errors.append(f"지원하지 않는 거래소 코드: {exchange}. AMS, NAS, NYS만 지원합니다.")
+
     if errors:
         return False, errors
     return True, []
@@ -128,7 +143,7 @@ def validate_config():
 
 if __name__ == "__main__":
     """설정 검증 테스트"""
-    print("Phoenix Trading System v3.1 - 설정 검증")
+    print("Phoenix Trading System v4.1 - 설정 검증")
     print("=" * 60)
 
     valid, errors = validate_config()
@@ -138,7 +153,10 @@ if __name__ == "__main__":
         print()
         print(f"프로젝트 루트: {PROJECT_ROOT}")
         print(f"Excel 템플릿: {EXCEL_TEMPLATE_PATH}")
-        print(f"종목: {TICKER}")
+        print(f"종목: {os.getenv('US_MARKET_TICKER', TICKER)}")
+        print(f"거래소: {os.getenv('US_MARKET_EXCHANGE', US_MARKET_EXCHANGE)}")
+        print(f"통화: {os.getenv('US_MARKET_CURRENCY', US_MARKET_CURRENCY)}")
+        print(f"API 모드: {KIS_API_MODE}")
         print(f"버전: {VERSION} ({VERSION_DATE})")
     else:
         print("[ERROR] 설정 오류 발견:")

@@ -29,12 +29,24 @@ import json
 import time
 import threading
 import hashlib
+import os
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Callable, List
 from dataclasses import dataclass
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+# config import
+try:
+    import config
+except ImportError:
+    # 상대 경로로 import 시도
+    import sys
+    from pathlib import Path
+    project_root = Path(__file__).parent.parent
+    sys.path.insert(0, str(project_root))
+    import config
 
 
 @dataclass
@@ -604,12 +616,16 @@ class KisRestAdapter:
             # [P0 FIX] 계좌번호 파싱 사용
             cano, acnt_prdt_cd = self._parse_account_no(account)
 
+            # 환경 변수에서 거래소 코드 가져오기
+            exchange_code = os.getenv("US_MARKET_EXCHANGE", config.US_MARKET_EXCHANGE)
+            logger.info(f"잔고 조회 거래소 코드: {exchange_code}")
+
             url = f"{self.BASE_URL}/uapi/overseas-stock/v1/trading/inquire-balance"
 
             params = {
                 "CANO": cano,
                 "ACNT_PRDT_CD": acnt_prdt_cd,
-                "OVRS_EXCG_CD": "NASD",     # 해외거래소코드 (실전: NASD=미국전체)
+                "OVRS_EXCG_CD": exchange_code,     # 해외거래소코드 (환경 변수/설정에서 가져옴)
                 "TR_CRCY_CD": "USD",        # 거래통화코드
                 "CTX_AREA_FK200": "",       # 연속조회검색조건200 (최초 조회시 공란)
                 "CTX_AREA_NK200": ""        # 연속조회키200 (최초 조회시 공란)
@@ -693,12 +709,23 @@ class KisRestAdapter:
             account = account_no or self.account_no
             cano, acnt_prdt_cd = self._parse_account_no(account)
 
+            # 환경 변수에서 거래소 코드 가져오기 (기본값: config.US_MARKET_EXCHANGE)
+            exchange_code = os.getenv("US_MARKET_EXCHANGE", config.US_MARKET_EXCHANGE)
+            
+            # ticker 기반으로 거래소 자동 감지 (SOXL → AMS)
+            if ticker == "SOXL":
+                exchange_code = "AMS"
+            elif exchange_code not in ["AMS", "NAS", "NYS"]:
+                exchange_code = "NAS"  # 기본값: 나스닥
+            
+            logger.info(f"예수금 조회 거래소 코드: {exchange_code} (종목: {ticker})")
+
             url = f"{self.BASE_URL}/uapi/overseas-stock/v1/trading/inquire-psamount"
 
             params = {
                 "CANO": cano,
                 "ACNT_PRDT_CD": acnt_prdt_cd,
-                "OVRS_EXCG_CD": "NASD",           # 나스닥 (미국)
+                "OVRS_EXCG_CD": exchange_code,    # 거래소 코드 (환경 변수/설정에서 가져옴)
                 "OVRS_ORD_UNPR": f"{price:.2f}",  # 주문단가 (소수점 2자리면 충분)
                 "ITEM_CD": ticker                 # 종목코드
             }
@@ -727,7 +754,7 @@ class KisRestAdapter:
                     # ord_psbl_frcr_amt: 주문가능외화금액 (USD 예수금)
                     cash_balance = float(output.get("ord_psbl_frcr_amt", 0))
 
-                    logger.info(f"USD 예수금 조회 성공: ${cash_balance:.2f}")
+                    logger.info(f"USD 예수금 조회 성공: ${cash_balance:.2f} (거래소: {exchange_code})")
                     return cash_balance
                 elif data.get("rt_cd") == "7":
                     # rt_cd=7: "상품이 없습니다" → 거래 이력 없음 or 잔고 0
@@ -737,6 +764,9 @@ class KisRestAdapter:
                 else:
                     error_msg = data.get('msg1', 'Unknown error')
                     logger.error(f"예수금 조회 실패: rt_cd={data.get('rt_cd')}, msg1={error_msg}")
+                    # 상세 디버그 정보 출력
+                    logger.debug(f"요청 파라미터: {params}")
+                    logger.debug(f"응답 전체: {data}")
                     return 0.0
             else:
                 logger.error(f"예수금 조회 HTTP 오류: {response.status_code}, 응답: {response.text}")
