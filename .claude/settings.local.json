@@ -30,7 +30,8 @@
       "WebFetch(domain:apiportal.koreainvestment.com)",
       "WebFetch(domain:github.com)",
       "Bash(del nul)",
-      "Bash(rm:*)"
+      "Bash(rm:*)",
+      "Bash(git checkout:*)"
     ],
     "deny": [],
     "ask": []
