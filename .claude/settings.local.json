@@ -18,7 +18,19 @@
       "Bash(unzip:*)",
       "Bash(pyinstaller:*)",
       "Bash(powershell -Command \"Compress-Archive -Path release/* -DestinationPath phoenix_trading_release.zip -Force\")",
-      "Bash(powershell -Command:*)"
+      "Bash(powershell -Command:*)",
+      "Bash(git pull:*)",
+      "Bash(dir:*)",
+      "Bash(copy check_env.py releasecheck_env.py)",
+      "Bash(grep:*)",
+      "Bash(copy \"USD잔고조회.exe\" \"release\\USD잔고조회.exe\" /Y)",
+      "Bash(copy \"USD잔고조회.bat\" \"release\\USD잔고조회.bat\" /Y)",
+      "Bash(\"USD잔고조회.exe\")",
+      "WebSearch",
+      "WebFetch(domain:apiportal.koreainvestment.com)",
+      "WebFetch(domain:github.com)",
+      "Bash(del nul)",
+      "Bash(rm:*)"
     ],
     "deny": [],
     "ask": []

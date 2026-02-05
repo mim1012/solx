@@ -1,0 +1,41 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ./.claude/hooks/security-check.sh \"${ARGUMENTS}\"",
+            "timeout": 5000,
+            "description": "위험한 명령 차단"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ./.claude/hooks/code-quality-check.sh \"${FILE_PATH}\"",
+            "timeout": 10000,
+            "description": "코드 스타일 및 타입 검증"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "prompt",
+            "prompt": "세션이 종료되었습니다.\n\n다음 중 원하는 작업을 선택하세요:\n1. Git 커밋 생성\n2. 테스트 실행\n3. 종료",
+            "description": "세션 종료 시 다음 단계 제안"
+          }
+        ]
+      }
+    ]
+  }
+}

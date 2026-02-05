@@ -1,0 +1,80 @@
+# Phoenix Trading System 실행 방법 (한글)
+
+## 🎯 가장 쉬운 방법
+
+### 1. 설정 파일 만들기
+```
+1. .env.example 파일을 .env로 복사
+2. 메모장으로 .env 파일 열기
+3. 다음 4줄만 입력하고 저장:
+
+KIS_APP_KEY=여기에_당신의_KIS_앱_키
+KIS_APP_SECRET=여기에_당신의_KIS_앱_시크릿
+KIS_ACCOUNT_NO=여기에_당신의_계좌번호
+US_MARKET_EXCHANGE=AMS
+```
+
+### 2. 프로그램 실행하기
+```
+PhoenixTrading_v4.1_Prebuilt.bat 파일 더블클릭
+```
+
+### 3. 결과 확인하기
+```
+콘솔 창에서 다음 메시지 확인:
+✅ [성공] KIS API 연결 성공
+✅ [성공] 잔고 동기화 성공
+✅ [정보] SOXL AMS 거래소에서 조회됨
+✅ [정보] 현재 잔고: $XXXX.XX
+```
+
+## 🔧 추가 설정 (선택사항)
+
+### config.py 수정하기
+메모장으로 config.py 파일을 열어 수정:
+```python
+# 잔고 동기화 주기 변경 (기본 60초)
+BALANCE_SYNC_INTERVAL = 30
+
+# 로그 레벨 변경 (더 자세한 로그)
+LOG_LEVEL = "DEBUG"
+
+# 디버그 모드 켜기
+DEBUG = True
+```
+
+## ⚠️ 주의사항
+
+### Windows Defender 차단 시
+```
+1. "추가 정보" 클릭
+2. "실행" 버튼 클릭
+3. 또는 Windows Defender 예외 추가
+```
+
+### Python 설치 필요
+- Python 3.8 이상 필요
+- 설치 시 "Add Python to PATH" 반드시 체크
+- https://www.python.org/downloads/
+
+## 🐛 문제 해결
+
+### Q: "Python이 설치되지 않았습니다"
+A: Python 설치, "Add Python to PATH" 체크
+
+### Q: "KIS API 연결 실패"
+A: .env 파일의 API 키 확인
+
+### Q: "잔고가 0으로 나와요"
+A: US_MARKET_EXCHANGE=AMS 확인
+
+### Q: 프로그램이 바로 꺼져요
+A: 명령프롬프트에서 실행하여 로그 확인
+
+## 📞 도움 요청 시
+1. 오류 메시지 스크린샷
+2. config.py 내용 (개인정보 제외)
+3. Windows 버전
+
+## 🎉 시작하기
+지금 바로 .env 파일 만들고 배치 파일 실행해보세요!

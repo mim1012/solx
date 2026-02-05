@@ -1,0 +1,27 @@
+# BMAD Method Configuration for Phoenix Trading System
+# Auto-generated: 2026-01-24
+
+# Project Identification
+project_name: "Phoenix Trading System"
+
+# User Configuration
+user_name: "User"
+user_skill_level: "expert"
+
+# Communication Settings
+communication_language: "Korean"
+document_output_language: "English"
+
+# Project Paths
+output_folder: "docs"
+planning_artifacts: "D:/Project/SOLX/docs/planning-artifacts"
+implementation_artifacts: "D:/Project/SOLX/docs/implementation-artifacts"
+project_knowledge: "D:/Project/SOLX/docs"
+
+# Test Architecture Settings
+tea_use_mcp_enhancements: false
+tea_use_playwright_utils: false
+
+# Project Metadata
+project_root: "D:/Project/SOLX"
+directory_name: "SOLX"
