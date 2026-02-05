@@ -507,10 +507,17 @@ class KisRestAdapter:
             # 계좌번호 파싱 (CANO, ACNT_PRDT_CD 분리)
             cano, acnt_prdt_cd = self._parse_account_no(self.account_no)
 
+            # [FIX] 거래소 코드 자동 감지 (SOXL → AMEX)
+            exchange_code = os.getenv("US_MARKET_EXCHANGE", config.US_MARKET_EXCHANGE)
+            if ticker == "SOXL":
+                exchange_code = "AMEX"
+            elif exchange_code not in ["AMEX", "NASD", "NYSE"]:
+                exchange_code = "NASD"  # 기본값
+
             payload = {
                 "CANO": cano,                       # 계좌번호 (8자리)
                 "ACNT_PRDT_CD": acnt_prdt_cd,       # 계좌상품코드 (2자리)
-                "OVRS_EXCG_CD": "NASD",             # 거래소코드 (나스닥)
+                "OVRS_EXCG_CD": exchange_code,      # [FIX] 거래소코드 (자동 감지)
                 "PDNO": ticker,                      # 종목코드
                 "ORD_QTY": str(quantity),            # 주문수량
                 "OVRS_ORD_UNPR": str(price) if order_kind == "limit" else "0",  # 주문단가
@@ -1112,6 +1119,9 @@ class KisRestAdapter:
         # 계좌번호 파싱
         cano, acnt_prdt_cd = self._parse_account_no(self.account_no)
 
+        # [FIX] 거래소 코드 설정
+        exchange_code = os.getenv("US_MARKET_EXCHANGE", config.US_MARKET_EXCHANGE)
+
         # 요청 파라미터
         params = {
             "CANO": cano,
@@ -1121,7 +1131,7 @@ class KisRestAdapter:
             "ORD_END_DT": order_date,
             "SLL_BUY_DVSN": "00",  # 전체 (매도/매수)
             "CCLD_NCCS_DVSN": "00",  # 전체 (체결/미체결)
-            "OVRS_EXCG_CD": "NASD",  # 미국 전체
+            "OVRS_EXCG_CD": exchange_code,  # [FIX] 거래소 코드 (config에서 가져옴)
             "SORT_SQN": "DS",  # 내림차순
             "ORD_DT": "",
             "ORD_GNO_BRNO": "",
