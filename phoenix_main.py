@@ -379,6 +379,49 @@ class PhoenixTradingSystem:
             logger.error(f"초기화 중 예외 발생: {e}", exc_info=True)
             return InitStatus.ERROR_EXCEL  # 일반 에러
 
+    def sync_balance_from_kis(self):
+        """
+        KIS API에서 잔고를 조회하여 GridEngine 상태 머신과 동기화
+        """
+        try:
+            if not self.kis_adapter or not self.grid_engine:
+                logger.warning("KIS API 또는 GridEngine이 초기화되지 않아 잔고 동기화 불가")
+                return False
+
+            # 현재가 조회
+            price_data = self.kis_adapter.get_overseas_price(self.settings.ticker)
+            if not price_data:
+                logger.error("시세 조회 실패로 잔고 동기화 불가")
+                return False
+
+            current_price = price_data['price']
+            
+            # USD 예수금 조회
+            balance = self.kis_adapter.get_cash_balance(
+                ticker=self.settings.ticker, 
+                price=current_price
+            )
+            
+            if balance is None:
+                logger.error("USD 예수금 조회 실패")
+                return False
+
+            # GridEngine 상태 머신 잔고 업데이트
+            old_balance = self.grid_engine.account_balance
+            self.grid_engine.account_balance = balance
+            
+            logger.info(f"잔고 동기화 완료: ${old_balance:.2f} → ${balance:.2f} (변동: ${balance - old_balance:+.2f})")
+            
+            # 텔레그램 알림 (잔고 변동이 큰 경우)
+            if self.telegram and abs(balance - old_balance) > 100.0:
+                self.telegram.notify_balance_update(old_balance, balance)
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"잔고 동기화 중 예외 발생: {e}")
+            return False
+
     def run(self) -> int:
         """
         메인 거래 루프
@@ -425,6 +468,10 @@ class PhoenixTradingSystem:
         logger.info("")
 
         try:
+            # 잔고 동기화 타이머 설정
+            last_balance_sync = datetime.now()
+            balance_sync_interval = int(os.getenv("BALANCE_SYNC_INTERVAL", "60"))  # 기본 60초
+            
             while self.is_running and not self.stop_requested:
                 # 1. 현재 시세 조회
                 price_data = self.kis_adapter.get_overseas_price(self.settings.ticker)
@@ -435,6 +482,15 @@ class PhoenixTradingSystem:
                     continue
 
                 current_price = price_data['price']
+                
+                # 1.5 주기적 잔고 동기화 (설정 간격마다)
+                now = datetime.now()
+                if (now - last_balance_sync).total_seconds() >= balance_sync_interval:
+                    logger.info(f"잔고 동기화 실행 (간격: {balance_sync_interval}초)")
+                    if self.sync_balance_from_kis():
+                        last_balance_sync = now
+                    else:
+                        logger.warning("잔고 동기화 실패, 다음 주기에 재시도")
 
                 # 시세가 0이면 시장 마감 체크
                 if current_price <= 0:

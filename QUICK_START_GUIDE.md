@@ -1,405 +1,173 @@
-# Phoenix Trading System - 빠른 시작 가이드
+# Phoenix Trading System v4.1 - 빠른 시작 가이드
 
-**작성일**: 2026-01-25
-**버전**: v1.1 (P0 개선 완료)
-**소요 시간**: 10분
+## 📋 시스템 요구사항
 
----
+- **운영체제**: Windows 10/11, macOS 10.15+, Ubuntu 18.04+
+- **Python**: 3.8 이상 (64비트)
+- **메모리**: 4GB RAM 이상
+- **저장공간**: 500MB 이상
 
-## 📋 1단계: Excel 설정 (3분)
+## 🚀 5분 안에 시작하기
 
-### Excel 파일 열기
+### 1단계: 파일 다운로드
+1. PhoenixTrading_v4.1.zip 파일 다운로드
+2. 원하는 폴더에 압축 해제
 
+### 2단계: 환경 설정 (Windows)
 ```
-파일: D:\Project\SOLX\phoenix_grid_template_v3.xlsx
+1. setup.bat 더블클릭 실행
+2. .env 파일 편집 (메모장으로 열기)
+3. phoenix_grid_template_v3.xlsx 편집
 ```
 
-**읽기 전용으로 열지 마세요** - 설정 입력이 필요합니다.
-
-### 필수 입력 항목 (Sheet 1: "01_매매전략_기준설정")
-
-| 셀 위치 | 항목 | 입력 예시 | 설명 |
-|---------|------|----------|------|
-| **B12** | APP KEY | `PSdFj3k...` | KIS API 키 (40자) |
-| **B13** | APP SECRET | `hK8sD...` | KIS Secret (40자) |
-| **B14** | 계좌번호 | `50068118-01` | 실계좌 번호 |
-| **B15** | 시스템 가동 | `FALSE` | 처음엔 FALSE (테스트 후 TRUE) |
-| **B16** | 티커 | `SOXL` | 거래 종목 |
-| **B17** | 초기 자본 | `10000` | 시작 금액 (USD) |
-| **B18** | Tier 1 가격 | `45.00` | 비워두면 자동 설정 |
-| **B19** | 티어당 투자금 | `500` | 티어 1개당 금액 |
-| **B20** | Tier 1 커스텀 모드 | `FALSE` | 갭 상승 거래 OFF |
-| **B21** | 시세 조회 주기 | `40` | 40초마다 가격 조회 |
-| **B22** | 체결 확인 활성화 | `TRUE` | 반드시 TRUE (안전) |
-
-### ⚠️ 중요 설정
-
-**첫 실행 시 반드시 FALSE로 설정**:
-- **B15 (시스템 가동)**: `FALSE`
-- 이유: 설정 검증 먼저 수행
-
-**소액 테스트 권장**:
-- **B17 (초기 자본)**: `500` (USD)
-- **B19 (티어당 투자금)**: `50` (USD)
-- 1주일 테스트 후 실제 금액으로 변경
-
----
-
-## 🔧 2단계: 환경 설정 확인 (2분)
-
-### Python 버전 확인
-
+### 2단계: 환경 설정 (macOS/Linux)
 ```bash
-python --version
+1. 터미널 열기
+2. cd /path/to/phoenix-trading
+3. ./setup.sh 실행
+4. .env 파일 편집
+5. phoenix_grid_template_v3.xlsx 편집
 ```
 
-**필요 버전**: Python 3.10 이상 (64-bit)
+### 3단계: .env 파일 설정
+```ini
+# 필수 설정
+KIS_APP_KEY=your_app_key_here
+KIS_APP_SECRET=your_app_secret_here
+KIS_ACCOUNT_NO=12345678-01
+KIS_API_MODE=REAL  # 또는 PAPER (모의투자)
 
-### 필수 패키지 설치
+# 미국 시장 설정 (SOXL 기본값)
+US_MARKET_TICKER=SOXL
+US_MARKET_EXCHANGE=AMS
+US_MARKET_CURRENCY=USD
 
-```bash
-cd D:\Project\SOLX
-pip install -r requirements.txt
+# 선택 설정
+TELEGRAM_BOT_TOKEN=your_bot_token
+TELEGRAM_CHAT_ID=your_chat_id
+LOG_LEVEL=INFO
+BALANCE_SYNC_INTERVAL=60
 ```
 
-**주요 패키지**:
-- `openpyxl`: Excel 파일 읽기/쓰기
-- `requests`: KIS REST API 호출
-- `pytz`: 시간대 변환 (한국 ↔ 미국)
+### 4단계: Excel 설정
+1. `phoenix_grid_template_v3.xlsx` 파일 열기
+2. `01_매매전략_기준설정` 시트에서:
+   - 계좌번호: 한국투자증권 계좌번호
+   - 종목코드: SOXL (고정)
+   - 투자금 (USD): 총 투자 금액
+   - 1티어 금액 (USD): 티어당 투자 금액
+3. 저장 (Ctrl + S)
 
-### .env 파일 확인 (선택사항)
-
+### 5단계: 테스트 실행
 ```bash
-# .env 파일이 있는지 확인
-if [ -f .env ]; then cat .env; else echo ".env 없음 (Excel 사용)"; fi
+# 설정 테스트
+python test_config.py
+
+# KIS API 연결 테스트
+python test_kis_fix.py
+
+# 문제 해결 테스트
+python test_kis_fix.py > test_log.txt 2>&1
 ```
 
-**참고**: APP KEY/SECRET은 Excel에 입력하므로 .env는 선택사항입니다.
-
----
-
-## ▶️ 3단계: 테스트 실행 (5분)
-
-### 3-1. 설정 검증 모드 (B15=FALSE)
-
-Excel B15를 **FALSE**로 설정한 상태에서 실행:
-
+### 6단계: 메인 실행
 ```bash
-cd D:\Project\SOLX
+# 일반 실행
 python phoenix_main.py
+
+# 상세 로그 모드
+python phoenix_main.py 2>&1 | tee trading_log.txt
 ```
 
-**예상 출력**:
+## 🔧 주요 문제 해결
+
+### 문제 1: "잔고 부족으로 배치 매수 중단"
 ```
-========================================
-Phoenix Trading System v1.1 시작
-========================================
-[19:00:05] 1/9 Excel 파일 로드 완료
-[19:00:06] 2/9 설정 검증 완료 (19개 필드)
-[19:00:06] 3/9 시스템 활성화 확인 (B15=FALSE)
-[19:00:06] ⚠️  시스템 가동 OFF (Excel B15=FALSE)
-[19:00:06] 설정을 확인하고 B15를 TRUE로 변경하세요.
-========================================
-시스템 종료 (InitStatus.STOPPED)
-========================================
+원인: USD 예수금이 $0.00으로 조회됨
+해결:
+1. test_kis_fix.py 실행하여 진단
+2. .env 파일에서 US_MARKET_EXCHANGE=AMS 확인
+3. 증권사 앱에서 USD 잔고 확인
 ```
 
-**확인 사항**:
-- ✅ Excel 파일 로드 성공
-- ✅ 19개 필드 검증 통과
-- ✅ B15=FALSE로 정상 종료
+### 문제 2: "KIS API 로그인 실패"
+```
+원인: API 키 또는 계좌번호 오류
+해결:
+1. .env 파일의 KIS_APP_KEY, KIS_APP_SECRET 확인
+2. 계좌번호 형식 확인 (12345678-01)
+3. KIS 개발자센터에서 앱키 권한 확인
+```
 
-### 3-2. KIS API 연결 테스트
+### 문제 3: "Python을 찾을 수 없습니다"
+```
+해결:
+1. Python 3.8+ 설치: https://www.python.org/downloads/
+2. 설치 시 "Add Python to PATH" 체크
+3. 재시작 후 setup.bat 다시 실행
+```
 
-Excel에서 **B15를 TRUE**로 변경 후 저장:
+## 📊 모니터링 방법
 
+### 로그 확인
+```
+logs/phoenix_YYYYMMDD_HHMMSS.log 파일 확인
+```
+
+### 실시간 모니터링
 ```bash
-python phoenix_main.py
+# Windows
+type logs\latest.log
+
+# macOS/Linux
+tail -f logs/latest.log
 ```
 
-**예상 출력**:
-```
-[19:00:07] 4/9 KIS API 키 검증 완료
-[19:00:10] 6/9 KIS API 로그인 완료
-[19:00:10]   - Access Token: eyJ0eXAi... (앞 10자)
-[19:00:10]   - Token 만료: 2026-01-26 19:00:10 (24시간 후)
-[19:00:12] 7/9 SOXL 현재가 조회: $45.23 (AMS)
-[19:00:13] 8/9 계좌 잔고 조회: $10,000.00
-========================================
-✅ Phoenix Trading System 초기화 완료
-========================================
-🚀 자동매매 시작 준비 완료
-========================================
-```
+### 상태 확인
+1. Excel 파일 실시간 업데이트 확인
+2. 텔레그램 알림 수신 확인
+3. 콘솔 창 로그 모니터링
 
-**확인 사항**:
-- ✅ KIS API 인증 성공 (Access Token 획득)
-- ✅ SOXL 현재가 조회 성공
-- ✅ 계좌 잔고 조회 성공
+## ⚡ 고급 설정
 
-### 3-3. 시스템 정상 종료 테스트
-
-실행 중인 시스템 종료:
-
-```
-Ctrl + C (키보드)
+### 다른 종목 거래 설정
+```ini
+# .env 파일에서 수정
+US_MARKET_TICKER=AAPL
+US_MARKET_EXCHANGE=NAS  # AAPL은 나스닥
 ```
 
-**예상 출력**:
-```
-^C
-사용자에 의한 종료 요청
-🛑 종료 신호 수신 중... 안전하게 종료합니다
-[19:05:20] Excel 최종 상태 저장 중...
-[19:05:21] ✅ 모든 상태 저장 완료
-[19:05:21] 시스템 정상 종료
-```
+### 잔고 동기화 간격 조정
+```ini
+# 더 빠른 동기화 (30초)
+BALANCE_SYNC_INTERVAL=30
 
----
-
-## 🚀 4단계: 실거래 시작 (1분)
-
-### 실거래 시작 조건
-
-✅ 모든 테스트 통과
-✅ Telegram 봇 설정 완료 (선택사항)
-✅ Excel B15 = TRUE
-✅ 소액 자본 설정 ($500 권장)
-
-### 실행 명령
-
-```bash
-cd D:\Project\SOLX
-python phoenix_main.py
+# 더 느린 동기화 (5분)
+BALANCE_SYNC_INTERVAL=300
 ```
 
-### 백그라운드 실행 (24/7 운영)
-
-**Windows Task Scheduler** 사용 권장:
-
-1. `작업 스케줄러` 실행
-2. `작업 만들기` 클릭
-3. **트리거**: 시스템 시작 시
-4. **동작**:
-   - 프로그램: `C:\Python310\python.exe`
-   - 인수: `D:\Project\SOLX\phoenix_main.py`
-   - 시작 위치: `D:\Project\SOLX`
-
-**또는 CMD에서 계속 실행**:
-```bash
-# CMD 창을 닫아도 계속 실행되도록
-start /min python phoenix_main.py
+### 디버그 모드 활성화
+```ini
+LOG_LEVEL=DEBUG
+DEBUG_MODE=true
 ```
-
----
-
-## 📊 5단계: 모니터링 (실행 중)
-
-### 실시간 모니터링 방법
-
-#### 방법 1: 콘솔 로그 (실시간)
-
-```
-[23:31:45] SOXL $45.23 | Tier 1: $50.00 | Positions: 5 tiers
-[23:32:25] SOXL $45.10 | Tier 1: $50.00 | Positions: 5 tiers
-[23:33:05] 📊 매수 신호: Tier 10, 10주 @ $45.00
-[23:33:07] [ORDER] 주문 접수 완료: Tier 10, 주문번호 KR123456
-[23:33:09] [FILL] 체결 확인: 10주 @ $44.98
-[23:33:10] ✅ 매수 체결: Tier 10, 10주 @ $44.98
-```
-
-#### 방법 2: Excel 파일 (40초마다 업데이트)
-
-Excel을 **읽기 전용**으로 열기 (`Ctrl+Shift+O`):
-
-**Sheet 1 - 실시간 상태**:
-- **H12**: 마지막 업데이트 시간
-- **H13**: 현재 보유 티어 목록
-- **H14**: 현재가
-- **H15**: 계좌 잔고
-- **H16**: 총 보유 수량
-- **F열, G열**: 각 티어별 수량/평균 매수가
-
-**Sheet 2 - 거래 히스토리**:
-- 모든 매수/매도 기록
-- 시간, 티어, 수량, 가격, 수익률
-
-#### 방법 3: 로그 파일
-
-```bash
-# 실시간 로그 확인
-tail -f phoenix_trading.log
-
-# 또는 Windows에서
-Get-Content phoenix_trading.log -Wait
-```
-
-#### 방법 4: Telegram (설정 시)
-
-**알림 종류**:
-- 🚀 시스템 시작
-- ✅ 매수 체결
-- ✅ 매도 체결
-- ⚠️ 체결 타임아웃
-- 🛑 긴급 정지 (잔고 부족, Tier 240)
-
----
-
-## ⚠️ 6단계: 문제 해결
-
-### 문제 1: Excel 파일 잠금 에러
-
-**에러 메시지**:
-```
-⚠️  Excel 잠금: 재시도 중 (1/3)
-```
-
-**해결**:
-1. Excel 파일 닫기
-2. 또는 **읽기 전용**으로 열기 (`Ctrl+Shift+O`)
-
-### 문제 2: KIS API 인증 실패
-
-**에러 메시지**:
-```
-❌ KIS API 인증 실패: Invalid APP KEY
-```
-
-**해결**:
-1. Excel B12, B13 확인 (APP KEY, SECRET)
-2. KIS 홈페이지에서 키 재확인
-3. 앞뒤 공백 제거
-
-### 문제 3: 시세 조회 실패
-
-**에러 메시지**:
-```
-⚠️  시세 조회 실패: 재시도 중 (1/3)
-```
-
-**해결**:
-- 자동 재시도 (3회, exponential backoff)
-- 네트워크 연결 확인
-- 3회 실패 시 40초 후 자동 재시도
-
-### 문제 4: 잔고 부족
-
-**에러 메시지**:
-```
-🛑 긴급 정지: 잔고 부족
-필요 금액: $2,820.00
-보유 잔고: $100.00
-```
-
-**해결**:
-1. KIS 계좌에 USD 입금
-2. Excel B15 → TRUE로 변경
-3. 시스템 재시작
-
-### 문제 5: Tier 240 도달
-
-**에러 메시지**:
-```
-🛑 Tier 240 도달 - 긴급 정지
-하락률: -80%
-```
-
-**해결**:
-1. **옵션 A**: 손절매 (수동 매도)
-2. **옵션 B**: Tier 1 재설정
-   - Excel B18에 새로운 가격 입력 (예: $15.00)
-   - B15 → TRUE
-   - 시스템 재시작
-
----
-
-## 📋 7단계: 일일 점검 체크리스트
-
-### 매일 확인 사항 (1분)
-
-- [ ] Excel H12 업데이트 시간 확인 (최근 1분 이내)
-- [ ] Sheet 2 로그 확인 (에러 없는지)
-- [ ] Telegram 알림 확인
-- [ ] 계좌 잔고 충분한지 ($5,000 이상 권장)
-
-### 주간 확인 사항 (5분)
-
-- [ ] Sheet 2 로그 분석 (거래 패턴)
-- [ ] 수익률 계산
-- [ ] Tier 230 이상 도달 여부
-- [ ] Excel 파일 백업
-
----
-
-## 🎯 소액 테스트 가이드 (1주일)
-
-### 권장 설정
-
-```
-Excel B15: TRUE (시스템 가동)
-Excel B17: $500 (초기 자본)
-Excel B19: $50 (티어당 투자금)
-Excel B22: TRUE (체결 확인)
-```
-
-### 테스트 목표
-
-1. ✅ 매수 신호 정상 생성
-2. ✅ 지정가 주문 체결 확인
-3. ✅ 부분 체결 정상 처리
-4. ✅ 매도 신호 및 수익 실현
-5. ✅ Excel 동기화 정상 작동
-6. ✅ 긴급 정지 메커니즘 작동
-
-### 1주일 후 평가
-
-**통과 조건**:
-- 체결 타임아웃 0회 또는 Telegram 알림 정상
-- Excel-KIS 포지션 일치
-- 에러 없이 7일 연속 운영
-
-**통과 시**: 본격 배포 ($5,000 이상)
-**실패 시**: 로그 분석 후 재테스트
-
----
 
 ## 📞 지원
 
-### 로그 수집 방법
+문제 발생 시:
+1. `logs/` 폴더의 로그 파일 확인
+2. `test_kis_fix.py` 실행 결과 공유
+3. README_배포용.txt 참조
 
-문제 발생 시 다음 파일 확인:
+## ⚠️ 주의사항
 
-1. **phoenix_trading.log**: 모든 거래 로그
-2. **Excel Sheet 2**: 거래 히스토리
-3. **kis_token_cache.json**: 토큰 상태
-
-```bash
-# 최근 100줄 로그 확인
-tail -100 phoenix_trading.log
-
-# 에러만 필터링
-grep "ERROR" phoenix_trading.log
-```
+1. **실거래 시스템** - 실제 자금 사용
+2. **고위험 상품** - SOXL은 3배 레버리지 ETF
+3. **소액 테스트** - $1,000~$5,000로 시작 권장
+4. **지속적 모니터링** - 시스템 상태 주기적 확인
 
 ---
 
-## 🚀 빠른 실행 요약
-
-```bash
-# 1. Excel 설정 (B12-B22 입력)
-# 2. B15 = FALSE로 시작
-
-cd D:\Project\SOLX
-python phoenix_main.py
-
-# 3. 설정 검증 통과 확인
-# 4. Excel B15 = TRUE로 변경
-
-python phoenix_main.py
-
-# 5. 실거래 시작!
-```
-
----
-
-**문서 끝** | 실행에 성공하셨나요? Telegram 알림을 확인하세요! 🎉
+**버전**: v4.1 (2026-02-04)
+**문서**: README_배포용.txt 참조
+**테스트**: test_config.py, test_kis_fix.py 실행 권장
