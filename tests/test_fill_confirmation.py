@@ -377,5 +377,5 @@ class TestWaitForFillIntegration:
         assert filled_qty == 0
         assert filled_price == 0.0
 
-        # 재시도 횟수 확인
-        assert mock_system.kis_adapter.get_order_fill_status.call_count == 3
+        # 재시도 횟수 확인: max_retries(3) + 타임아웃 후 추가 조회(1) = 4
+        assert mock_system.kis_adapter.get_order_fill_status.call_count == 4
