@@ -396,10 +396,10 @@ class KisRestAdapter:
             except (ValueError, TypeError):
                 return default
 
-        # 거래소 코드 우선순위: NAS → AMS → NYS
-        # 대부분 종목: NAS (나스닥)
-        # 일부 ETF (SOXL, SPY, SPXL 등): AMS (아멕스)
-        exchanges_to_try = ["NAS", "AMS", "NYS"]
+        # 거래소 코드 우선순위: NASD → AMEX → NYSE
+        # 대부분 종목: NASD (나스닥)
+        # 일부 ETF (SOXL, SPY, SPXL 등): AMEX (아멕스)
+        exchanges_to_try = ["NASD", "AMEX", "NYSE"]
 
         for excd in exchanges_to_try:
             try:
@@ -457,7 +457,7 @@ class KisRestAdapter:
                 continue
 
         # 모든 거래소에서 실패
-        logger.error(f"{ticker}: 모든 거래소(NAS, AMS, NYS)에서 시세 조회 실패")
+        logger.error(f"{ticker}: 모든 거래소(NASD, AMEX, NYSE)에서 시세 조회 실패")
         return None
 
     # =====================================
@@ -712,11 +712,11 @@ class KisRestAdapter:
             # 환경 변수에서 거래소 코드 가져오기 (기본값: config.US_MARKET_EXCHANGE)
             exchange_code = os.getenv("US_MARKET_EXCHANGE", config.US_MARKET_EXCHANGE)
             
-            # ticker 기반으로 거래소 자동 감지 (SOXL → AMS)
+            # ticker 기반으로 거래소 자동 감지 (SOXL → AMEX)
             if ticker == "SOXL":
-                exchange_code = "AMS"
-            elif exchange_code not in ["AMS", "NAS", "NYS"]:
-                exchange_code = "NAS"  # 기본값: 나스닥
+                exchange_code = "AMEX"
+            elif exchange_code not in ["AMEX", "NASD", "NYSE"]:
+                exchange_code = "NASD"  # 기본값: 나스닥
             
             logger.info(f"예수금 조회 거래소 코드: {exchange_code} (종목: {ticker})")
 

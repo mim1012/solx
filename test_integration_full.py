@@ -182,7 +182,7 @@ def main():
         kis = KisRestAdapter(
             app_key=settings.kis_app_key,
             app_secret=settings.kis_app_secret,
-            account_no=settings.account_no
+            account_no=settings.kis_account_no  # [FIX] B14에서 읽은 실제 계좌번호 사용
         )
 
         # 4. 로그인

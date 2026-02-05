@@ -303,7 +303,7 @@ class PhoenixTradingSystem:
             self.kis_adapter = KisRestAdapter(
                 app_key=self.settings.kis_app_key,
                 app_secret=self.settings.kis_app_secret,
-                account_no=self.settings.kis_account_no or self.settings.account_no
+                account_no=self.settings.kis_account_no  # [FIX] B14에서 읽은 실제 계좌번호 사용
             )
 
             if not self.kis_adapter.login():
