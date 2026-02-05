@@ -434,7 +434,7 @@ class KisRestAdapter:
 
                         # 가격이 0보다 크면 성공
                         if price > 0:
-                            if excd != "NAS":
+                            if excd != "NASD":
                                 logger.info(f"[거래소 자동 감지] {ticker}는 {excd} 거래소에서 조회됨")
 
                             return {

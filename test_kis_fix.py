@@ -13,7 +13,7 @@ sys.path.insert(0, str(project_root))
 
 # 환경 변수 설정 (테스트용)
 os.environ["US_MARKET_TICKER"] = "SOXL"
-os.environ["US_MARKET_EXCHANGE"] = "AMS"
+os.environ["US_MARKET_EXCHANGE"] = "AMEX"  # [FIX] SOXL은 AMEX 거래소
 os.environ["US_MARKET_CURRENCY"] = "USD"
 os.environ["KIS_API_MODE"] = "REAL"
 
