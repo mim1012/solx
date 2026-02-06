@@ -49,7 +49,7 @@ def get_usd_balance(app_key, app_secret, account_no, access_token):
     params = {
         "CANO": cano,
         "ACNT_PRDT_CD": acnt_prdt_cd,
-        "OVRS_EXCG_CD": "AMS",  # [FIX] SOXL은 AMS 거래소 (아멕스/NYSE Arca)
+        "OVRS_EXCG_CD": "AMEX",  # [FIX] SOXL은 AMEX 거래소 (잔고조회는 4글자 코드)
         "OVRS_ORD_UNPR": "1.00",
         "ITEM_CD": "SOXL"
     }

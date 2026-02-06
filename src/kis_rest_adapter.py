@@ -606,12 +606,13 @@ class KisRestAdapter:
             # 계좌번호 파싱 (CANO, ACNT_PRDT_CD 분리)
             cano, acnt_prdt_cd = self._parse_account_no(self.account_no)
 
-            # [FIX] 거래소 코드 자동 감지 (SOXL → AMS)
+            # [FIX] 거래소 코드 자동 감지 (SOXL → AMEX)
+            # 주의: 거래/주문 API는 4글자 코드 사용 (시세 조회 API와 다름)
             exchange_code = os.getenv("US_MARKET_EXCHANGE", config.US_MARKET_EXCHANGE)
             if ticker == "SOXL":
-                exchange_code = "AMS"
-            elif exchange_code not in ["AMS", "NAS", "NYS"]:
-                exchange_code = "NAS"  # 기본값
+                exchange_code = "AMEX"  # 4글자 코드
+            elif exchange_code not in ["AMEX", "NASD", "NYSE"]:
+                exchange_code = "NASD"  # 기본값
 
             payload = {
                 "CANO": cano,                       # 계좌번호 (8자리)
@@ -818,11 +819,12 @@ class KisRestAdapter:
             # 환경 변수에서 거래소 코드 가져오기 (기본값: config.US_MARKET_EXCHANGE)
             exchange_code = os.getenv("US_MARKET_EXCHANGE", config.US_MARKET_EXCHANGE)
             
-            # ticker 기반으로 거래소 자동 감지 (SOXL → AMS)
+            # ticker 기반으로 거래소 자동 감지 (SOXL → AMEX)
+            # 주의: 거래/주문 API는 4글자 코드 사용 (시세 조회 API와 다름)
             if ticker == "SOXL":
-                exchange_code = "AMS"
-            elif exchange_code not in ["AMS", "NAS", "NYS"]:
-                exchange_code = "NAS"  # 기본값: 나스닥
+                exchange_code = "AMEX"  # 4글자 코드
+            elif exchange_code not in ["AMEX", "NASD", "NYSE"]:
+                exchange_code = "NASD"  # 기본값: 나스닥
             
             logger.info(f"예수금 조회 거래소 코드: {exchange_code} (종목: {ticker})")
 
