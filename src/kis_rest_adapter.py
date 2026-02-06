@@ -449,6 +449,14 @@ class KisRestAdapter:
                             # 가격이 0이면 다음 거래소 시도
                             logger.debug(f"{ticker}: {excd} 거래소에서 시세 없음 (다음 거래소 시도)")
                             continue
+                    else:
+                        # rt_cd가 0이 아닌 경우
+                        logger.debug(f"{ticker}: {excd} 거래소 API 응답 실패 - rt_cd={data.get('rt_cd')}, msg={data.get('msg1')}")
+                        continue
+                else:
+                    # HTTP 에러 응답
+                    logger.debug(f"{ticker}: {excd} 거래소 HTTP {response.status_code} 에러 - {response.text[:200]}")
+                    continue
 
             except AuthenticationError:
                 raise

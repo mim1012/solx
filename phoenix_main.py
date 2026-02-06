@@ -50,13 +50,17 @@ def setup_logging():
 
     log_file = log_dir / f"phoenix_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
 
+    # StreamHandler 생성 및 즉시 플러시 설정
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.flush = lambda: sys.stdout.flush()
+
     logging.basicConfig(
         level=logging.INFO,
         format=config.LOG_FORMAT,
         datefmt=config.LOG_DATE_FORMAT,
         handlers=[
             logging.FileHandler(log_file, encoding='utf-8'),
-            logging.StreamHandler(sys.stdout)
+            console_handler
         ]
     )
 
@@ -312,19 +316,21 @@ class PhoenixTradingSystem:
 
             logger.info("[OK] KIS API 로그인 성공")
 
-            # 7. 초기 시세 조회
+            # 7. 초기 시세 조회 (장 마감 시 실패 허용)
             logger.info(f"{self.settings.ticker} 초기 시세 조회 중...")
             price_data = self.kis_adapter.get_overseas_price(self.settings.ticker)
 
             if not price_data:
-                logger.error(f"{self.settings.ticker} 시세 조회 실패!")
-                return InitStatus.ERROR_PRICE
-
-            current_price = price_data['price']
-            logger.info(f"  - 현재가: ${current_price:.2f}")
-            logger.info(f"  - 시가: ${price_data['open']:.2f}")
-            logger.info(f"  - 고가: ${price_data['high']:.2f}")
-            logger.info(f"  - 저가: ${price_data['low']:.2f}")
+                logger.warning(f"{self.settings.ticker} 시세 조회 실패 (장 마감 가능성)")
+                logger.warning("  - 시장 개장 후 자동으로 시세를 조회합니다")
+                logger.warning("  - 임시로 current_price=0 설정")
+                current_price = 0.0
+            else:
+                current_price = price_data['price']
+                logger.info(f"  - 현재가: ${current_price:.2f}")
+                logger.info(f"  - 시가: ${price_data['open']:.2f}")
+                logger.info(f"  - 고가: ${price_data['high']:.2f}")
+                logger.info(f"  - 저가: ${price_data['low']:.2f}")
 
             # 8. USD 예수금 조회 (매수가능금액조회 API)
             logger.info("USD 예수금 조회 중...")
@@ -887,20 +893,20 @@ def main():
     exit_code = 1  # 기본값: 에러
 
     try:
-        print("")
-        print("=" * 60)
-        print("Phoenix Trading System v4.1 (KIS REST API)")
-        print("SOXL 자동매매 시스템")
-        print("=" * 60)
-        print("")
+        print("", flush=True)
+        print("=" * 60, flush=True)
+        print("Phoenix Trading System v4.1 (KIS REST API)", flush=True)
+        print("SOXL 자동매매 시스템", flush=True)
+        print("=" * 60, flush=True)
+        print("", flush=True)
 
         # Excel 파일 경로 (인자로 받거나 기본값)
         excel_file = sys.argv[1] if len(sys.argv) > 1 else None
 
         # 실거래 경고
-        print("[WARNING] 경고: 이 시스템은 실제 자금으로 SOXL을 거래합니다.")
-        print("[WARNING] 손실 위험이 있으며, 투자 책임은 사용자에게 있습니다.")
-        print("")
+        print("[WARNING] 경고: 이 시스템은 실제 자금으로 SOXL을 거래합니다.", flush=True)
+        print("[WARNING] 손실 위험이 있으며, 투자 책임은 사용자에게 있습니다.", flush=True)
+        print("", flush=True)
 
         # 시스템 시작
         system = PhoenixTradingSystem(excel_file)
@@ -932,7 +938,14 @@ def main():
             print("위 로그를 확인하여 문제를 파악하세요.")
         print("=" * 60)
         print("")
-        input("Press Enter to exit...")
+
+        try:
+            input("Press Enter to exit...")
+        except (EOFError, OSError):
+            # stdin이 없는 경우 (더블클릭 실행)
+            import msvcrt
+            print("Press any key to exit...")
+            msvcrt.getch()
 
     # 종료 코드 반환
     sys.exit(exit_code)
