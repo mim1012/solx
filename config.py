@@ -32,7 +32,7 @@ TICKER = "SOXL"  # 고정 종목
 MARKET = "US"    # 미국 주식
 
 # 미국 시장 설정
-US_MARKET_EXCHANGE = "AMEX"  # [FIX] SOXL 거래소: AMEX (아멕스), 다른 종목: NASD (나스닥), NYSE (뉴욕증권거래소)
+US_MARKET_EXCHANGE = "AMS"  # [FIX] SOXL 거래소: AMS (아멕스/NYSE Arca), 다른 종목: NAS (나스닥), NYS (뉴욕증권거래소)
 US_MARKET_CURRENCY = "USD"  # 거래 통화
 US_MARKET_TIMEZONE = "America/New_York"  # 미국 동부 시간대
 
@@ -133,8 +133,8 @@ def validate_config():
 
     # 미국 시장 설정 검증
     exchange = os.getenv("US_MARKET_EXCHANGE", US_MARKET_EXCHANGE)
-    if exchange not in ["AMEX", "NASD", "NYSE"]:
-        errors.append(f"지원하지 않는 거래소 코드: {exchange}. AMEX, NASD, NYSE만 지원합니다.")
+    if exchange not in ["AMS", "NAS", "NYS"]:
+        errors.append(f"지원하지 않는 거래소 코드: {exchange}. AMS, NAS, NYS만 지원합니다.")
 
     if errors:
         return False, errors

@@ -88,6 +88,7 @@ class KisRestAdapter:
 
     # TR ID 정의
     TR_ID_OVERSEAS_PRICE = "HHDFS00000300"      # 해외주식 현재가
+    TR_ID_OVERSEAS_DAILY_PRICE = "HHDFS76240000"  # 해외주식 기간별시세(일/주/월/년)
     TR_ID_OVERSEAS_BUY = "TTTT1002U"            # 해외주식 매수 (실전: TTTT1002U, 모의: VTTT1002U)
     TR_ID_OVERSEAS_SELL = "TTTT1006U"           # 해외주식 매도 (실전: TTTT1006U, 모의: VTTT1001U)
     TR_ID_OVERSEAS_BALANCE = "CTRP6548R"        # 해외주식 잔고
@@ -396,10 +397,10 @@ class KisRestAdapter:
             except (ValueError, TypeError):
                 return default
 
-        # 거래소 코드 우선순위: NASD → AMEX → NYSE
-        # 대부분 종목: NASD (나스닥)
-        # 일부 ETF (SOXL, SPY, SPXL 등): AMEX (아멕스)
-        exchanges_to_try = ["NASD", "AMEX", "NYSE"]
+        # 거래소 코드 우선순위: NAS → AMS → NYS
+        # 대부분 종목: NAS (나스닥)
+        # 일부 ETF (SOXL, SPY, SPXL 등): AMS (아멕스/NYSE Arca)
+        exchanges_to_try = ["NAS", "AMS", "NYS"]
 
         for excd in exchanges_to_try:
             try:
@@ -434,7 +435,7 @@ class KisRestAdapter:
 
                         # 가격이 0보다 크면 성공
                         if price > 0:
-                            if excd != "NASD":
+                            if excd != "NAS":
                                 logger.info(f"[거래소 자동 감지] {ticker}는 {excd} 거래소에서 조회됨")
 
                             return {
@@ -464,8 +465,98 @@ class KisRestAdapter:
                 logger.warning(f"{ticker}: {excd} 거래소 조회 중 예외: {e}")
                 continue
 
-        # 모든 거래소에서 실패
-        logger.error(f"{ticker}: 모든 거래소(NASD, AMEX, NYSE)에서 시세 조회 실패")
+        # 모든 거래소에서 실패 - 기간별 시세 조회 시도 (장 마감 후 대응)
+        logger.warning(f"{ticker}: 실시간 시세 조회 실패 - 기간별 시세(일봉) 조회 시도")
+        return self.get_overseas_daily_price_last(ticker)
+
+    def get_overseas_daily_price_last(self, ticker: str) -> Optional[Dict]:
+        """
+        해외주식 기간별시세 조회 (최근 1일 데이터)
+        장 마감 후에도 전일 종가를 조회할 수 있음
+
+        Args:
+            ticker: 종목코드 (예: SOXL)
+
+        Returns:
+            dict: 시세 정보 (전일 종가) 또는 None
+        """
+        # 빈 문자열 처리 함수
+        def safe_float(value, default=0.0):
+            if value == "" or value is None:
+                return default
+            try:
+                return float(value)
+            except (ValueError, TypeError):
+                return default
+
+        # 거래소 코드 우선순위
+        exchanges_to_try = ["NAS", "AMS", "NYS"]
+
+        for excd in exchanges_to_try:
+            try:
+                self._apply_rate_limit()
+
+                url = f"{self.BASE_URL}/uapi/overseas-price/v1/quotations/dailyprice"
+
+                params = {
+                    "AUTH": "",
+                    "EXCD": excd,
+                    "SYMB": ticker,
+                    "GUBN": "0",  # 0:일봉, 1:주봉, 2:월봉
+                    "BYMD": "",   # 기준일자 (빈값: 현재일 기준)
+                    "MODP": "0"   # 0:수정주가 미반영, 1:수정주가 반영
+                }
+
+                headers = self._get_headers(tr_id=self.TR_ID_OVERSEAS_DAILY_PRICE)
+
+                response = requests.get(
+                    url,
+                    headers=headers,
+                    params=params,
+                    timeout=10
+                )
+
+                if response.status_code == 200:
+                    data = response.json()
+
+                    if data.get("rt_cd") == "0":
+                        # output2 배열의 첫 번째 데이터 (최신 일봉)
+                        output2 = data.get("output2", [])
+                        if output2 and len(output2) > 0:
+                            latest = output2[0]  # 최근 데이터
+
+                            close_price = safe_float(latest.get("clos"))
+                            if close_price > 0:
+                                logger.info(f"[기간별 시세] {ticker} {excd} 거래소 종가: ${close_price:.2f}")
+
+                                return {
+                                    "ticker": ticker,
+                                    "price": close_price,
+                                    "open": safe_float(latest.get("open")),
+                                    "high": safe_float(latest.get("high")),
+                                    "low": safe_float(latest.get("low")),
+                                    "volume": int(latest.get("tvol") or 0)
+                                }
+
+                        logger.debug(f"{ticker}: {excd} 기간별 시세 데이터 없음")
+                        continue
+
+                    else:
+                        logger.debug(f"{ticker}: {excd} 기간별 시세 API 실패 - rt_cd={data.get('rt_cd')}")
+                        continue
+
+                else:
+                    logger.debug(f"{ticker}: {excd} 기간별 시세 HTTP {response.status_code} - {response.text[:500]}")
+                    continue
+
+            except AuthenticationError:
+                raise
+            except Exception as e:
+                logger.warning(f"{ticker}: {excd} 기간별 시세 조회 예외: {e}")
+                continue
+
+        # 모든 시도 실패
+        logger.error(f"{ticker}: 실시간 및 기간별 시세 모두 조회 실패")
         return None
 
     # =====================================
@@ -515,12 +606,12 @@ class KisRestAdapter:
             # 계좌번호 파싱 (CANO, ACNT_PRDT_CD 분리)
             cano, acnt_prdt_cd = self._parse_account_no(self.account_no)
 
-            # [FIX] 거래소 코드 자동 감지 (SOXL → AMEX)
+            # [FIX] 거래소 코드 자동 감지 (SOXL → AMS)
             exchange_code = os.getenv("US_MARKET_EXCHANGE", config.US_MARKET_EXCHANGE)
             if ticker == "SOXL":
-                exchange_code = "AMEX"
-            elif exchange_code not in ["AMEX", "NASD", "NYSE"]:
-                exchange_code = "NASD"  # 기본값
+                exchange_code = "AMS"
+            elif exchange_code not in ["AMS", "NAS", "NYS"]:
+                exchange_code = "NAS"  # 기본값
 
             payload = {
                 "CANO": cano,                       # 계좌번호 (8자리)
@@ -727,11 +818,11 @@ class KisRestAdapter:
             # 환경 변수에서 거래소 코드 가져오기 (기본값: config.US_MARKET_EXCHANGE)
             exchange_code = os.getenv("US_MARKET_EXCHANGE", config.US_MARKET_EXCHANGE)
             
-            # ticker 기반으로 거래소 자동 감지 (SOXL → AMEX)
+            # ticker 기반으로 거래소 자동 감지 (SOXL → AMS)
             if ticker == "SOXL":
-                exchange_code = "AMEX"
-            elif exchange_code not in ["AMEX", "NASD", "NYSE"]:
-                exchange_code = "NASD"  # 기본값: 나스닥
+                exchange_code = "AMS"
+            elif exchange_code not in ["AMS", "NAS", "NYS"]:
+                exchange_code = "NAS"  # 기본값: 나스닥
             
             logger.info(f"예수금 조회 거래소 코드: {exchange_code} (종목: {ticker})")
 
