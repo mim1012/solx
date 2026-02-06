@@ -48,7 +48,7 @@ def get_usd_balance(app_key, app_secret, account_no, access_token):
     params = {
         "CANO": cano,
         "ACNT_PRDT_CD": acnt_prdt_cd,
-        "OVRS_EXCG_CD": "NASD",
+        "OVRS_EXCG_CD": "AMEX",  # [FIX] SOXL은 AMEX 거래소
         "OVRS_ORD_UNPR": "1.00",
         "ITEM_CD": "SOXL"
     }
@@ -82,7 +82,7 @@ def main():
 
     # Excel에서 설정 읽기
     try:
-        wb = openpyxl.load_workbook('release/phoenix_grid_template_v3.xlsx')
+        wb = openpyxl.load_workbook('phoenix_grid_template_v3.xlsx')
         ws = wb.active
 
         app_key = ws['B12'].value
@@ -103,6 +103,7 @@ def main():
     except Exception as e:
         print(f"[ERROR] Excel 파일 읽기 실패: {e}")
         return
+        print("   phoenix_grid_template_v3.xlsx 파일이 같은 폴더에 있는지 확인하세요.")
 
     # 토큰 발급
     print("토큰 발급 중...")
