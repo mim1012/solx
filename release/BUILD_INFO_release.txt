@@ -1,35 +1,39 @@
 Build Mode: release
-Build Time: 2026-02-06 16:50:00
+Build Time: 2026-02-06 17:00:00
 Python Version: 3.11.8
 Platform: Windows
-Exchange Code Fix: KIS API 표준 3글자 코드 적용
+Exchange Code Fix: KIS API 이중 코드 시스템 적용
 
 Executables:
 - PhoenixTrading.exe (52MB) - 전체 자동매매 시스템
 - USD잔고조회.exe (51MB) - USD 예수금 조회 도구
 
-Critical Fix - KIS API 거래소 코드 표준화:
-- 기존 (잘못된 4글자): NASD, AMEX, NYSE
-- 수정 (올바른 3글자): NAS, AMS, NYS
+Critical Discovery - KIS API 거래소 코드 이중 시스템:
+KIS API는 두 가지 다른 거래소 코드 형식을 사용:
+
+1. 시세 조회 API (3글자):
+   - NAS (나스닥)
+   - AMS (아멕스)
+   - NYS (뉴욕)
+
+2. 거래/주문/잔고 API (4글자):
+   - NASD (나스닥)
+   - AMEX (아멕스)
+   - NYSE (뉴욕)
 
 Changes:
-- config.py: US_MARKET_EXCHANGE = "AMS" (KIS API 표준)
-- kis_rest_adapter.py: 모든 API에 3글자 거래소 코드 적용
-  * 시세 조회 API: NAS → AMS → NYS 순서로 시도
-  * 기간별 시세 API: 장 마감 후 전일 종가 조회
-  * 주문 실행 API: AMS 코드 사용
-  * USD 예수금 조회 API: AMS 코드 사용
-- check_usd_balance.py: AMS 거래소 코드 적용
+- config.py: US_MARKET_EXCHANGE = "AMEX" (거래 API용)
+- kis_rest_adapter.py:
+  * get_overseas_price(): 3글자 코드 (NAS, AMS, NYS)
+  * get_overseas_daily_price_last(): 3글자 코드
+  * _send_order_internal(): 4글자 코드 (AMEX)
+  * get_cash_balance(): 4글자 코드 (AMEX)
+- check_usd_balance.py: AMEX 거래소 코드 적용
 
-KIS API 공식 거래소 코드 (3글자):
-- NAS: 나스닥 (NASDAQ)
-- NYS: 뉴욕증권거래소 (NYSE)
-- AMS: 아멕스/NYSE Arca (AMEX)
+SOXL 거래소 코드:
+- 시세 조회: AMS (3글자)
+- 거래/주문: AMEX (4글자)
 
-SOXL 정보:
-- 상장 거래소: NYSE Arca (= AMEX 통합)
-- KIS API 코드: AMS
-
-Test Required:
-- 장중 시간(한국 23:30~06:00)에 시세 조회 테스트 필요
-- 장 마감 시간에는 KIS API 시세 제공 안 함
+Test Results (2026-02-06 17:00):
+- 시세 조회: $53.25 (AMS로 성공)
+- USD 잔고 조회: $339.77 (AMEX로 성공) ✅
