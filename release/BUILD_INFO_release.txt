@@ -1,4 +1,15 @@
 Build Mode: release
-Build Time: 2026-02-05 04:25:41
-Python Version: 3.11.8 (tags/v3.11.8:db85d51, Feb  6 2024, 22:03:32) [MSC v.1937 64 bit (AMD64)]
-Platform: win32
+Build Time: 2026-02-06 02:20:00
+Python Version: 3.11.8
+Platform: Windows
+Exchange Code Fix: AMEX/NASD/NYSE (AMS/NAS/NYS 제거)
+
+Changes:
+- config.py: US_MARKET_EXCHANGE = "AMEX"
+- kis_rest_adapter.py: 모든 API에 AMEX/NASD/NYSE 적용
+  * 주문 실행 API (Line 513)
+  * 잔고 조회 API (Line 628)
+  * USD 예수금 조회 API (Line 724)
+  * 체결 상태 조회 API (Line 1123)
+  * 현재가 조회 API (Line 399)
+- SOXL의 올바른 거래소는 AMEX입니다

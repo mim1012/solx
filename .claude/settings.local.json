@@ -31,7 +31,11 @@
       "WebFetch(domain:github.com)",
       "Bash(del nul)",
       "Bash(rm:*)",
-      "Bash(git checkout:*)"
+      "Bash(git checkout:*)",
+      "Bash(del kis_token_cache.json)",
+      "Bash(tail:*)",
+      "Bash(copy /Y \"dist\\PhoenixTrading.exe\" \"release\\PhoenixTrading.exe\")",
+      "Bash(npm install:*)"
     ],
     "deny": [],
     "ask": []
