@@ -4,6 +4,7 @@
 import openpyxl
 import requests
 import json
+import os
 from datetime import datetime
 
 def get_access_token(app_key, app_secret):
@@ -81,6 +82,10 @@ def main():
     print()
 
     # Excel에서 설정 읽기
+    app_key = None
+    app_secret = None
+    account_no = None
+
     try:
         wb = openpyxl.load_workbook('phoenix_grid_template_v3.xlsx')
         ws = wb.active
@@ -89,21 +94,37 @@ def main():
         app_secret = ws['B13'].value
         account_no = ws['B14'].value
 
-        print(f"계좌번호: {account_no}")
-        print(f"APP KEY: {app_key[:20]}..." if app_key else "APP KEY: None")
+    except Exception as e:
+        print(f"[WARNING] Excel 파일 읽기 실패: {e}")
+        print("   환경변수(.env)에서 읽기를 시도합니다.")
         print()
 
-        if not app_key or not app_secret or not account_no:
-            print("[ERROR] Excel 파일에 API 키 또는 계좌번호가 설정되지 않았습니다.")
-            print("   B12: KIS APP KEY")
-            print("   B13: KIS APP SECRET")
-            print("   B14: 계좌번호 (예: 12345678-01)")
-            return
+    # Excel에 값이 없거나 플레이스홀더인 경우 환경변수에서 읽기
+    if not app_key or app_key == "your_kis_app_key_here":
+        app_key = os.getenv("KIS_APP_KEY")
+    if not app_secret or app_secret == "your_kis_app_secret_here":
+        app_secret = os.getenv("KIS_APP_SECRET")
+    if not account_no or account_no == "12345678-01":
+        account_no = os.getenv("KIS_ACCOUNT_NO")
 
-    except Exception as e:
-        print(f"[ERROR] Excel 파일 읽기 실패: {e}")
+    print(f"계좌번호: {account_no if account_no else 'None'}")
+    print(f"APP KEY: {app_key[:20]}..." if app_key else "APP KEY: None")
+    print()
+
+    if not app_key or not app_secret or not account_no:
+        print("[ERROR] API 키 또는 계좌번호가 설정되지 않았습니다.")
+        print()
+        print("다음 중 하나의 방법으로 설정하세요:")
+        print("   1. phoenix_grid_template_v3.xlsx 파일의")
+        print("      B12: KIS APP KEY")
+        print("      B13: KIS APP SECRET")
+        print("      B14: 계좌번호 (예: 12345678-01)")
+        print()
+        print("   2. 또는 .env 파일에 다음 내용 추가:")
+        print("      KIS_APP_KEY=your_app_key_here")
+        print("      KIS_APP_SECRET=your_app_secret_here")
+        print("      KIS_ACCOUNT_NO=12345678-01")
         return
-        print("   phoenix_grid_template_v3.xlsx 파일이 같은 폴더에 있는지 확인하세요.")
 
     # 토큰 발급
     print("토큰 발급 중...")
@@ -161,3 +182,6 @@ if __name__ == "__main__":
         print(f"\n예외 발생: {e}")
         import traceback
         traceback.print_exc()
+    finally:
+        print("\n")
+        input("Press Enter to exit...")
