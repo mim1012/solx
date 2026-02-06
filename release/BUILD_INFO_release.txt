@@ -1,8 +1,12 @@
 Build Mode: release
-Build Time: 2026-02-06 02:20:00
+Build Time: 2026-02-06 15:04:00
 Python Version: 3.11.8
 Platform: Windows
 Exchange Code Fix: AMEX/NASD/NYSE (AMS/NAS/NYS 제거)
+
+Executables:
+- PhoenixTrading.exe (339MB) - 전체 자동매매 시스템
+- USD잔고조회.exe (51MB) - USD 예수금 조회 도구
 
 Changes:
 - config.py: US_MARKET_EXCHANGE = "AMEX"
@@ -12,4 +16,10 @@ Changes:
   * USD 예수금 조회 API (Line 724)
   * 체결 상태 조회 API (Line 1123)
   * 현재가 조회 API (Line 399)
+- check_usd_balance.py: AMEX 거래소 코드 적용
 - SOXL의 올바른 거래소는 AMEX입니다
+
+Test Results:
+- USD잔고조회.exe: 정상 동작 확인 (2026-02-06 14:52)
+  * 잔고 조회 성공: $339.77
+  * AMEX 거래소 코드 정상 적용

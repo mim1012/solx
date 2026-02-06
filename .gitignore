@@ -55,3 +55,6 @@ kis_token_cache.json
 *.tmp
 *.bak
 *_backup*
+
+# Executables (too large for GitHub, build locally)
+*.exe
