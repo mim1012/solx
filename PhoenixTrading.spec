@@ -5,12 +5,12 @@ a = Analysis(
     ['phoenix_main.py'],
     pathex=[],
     binaries=[],
-    datas=[('src', 'src')],
-    hiddenimports=['openpyxl', 'openpyxl.cell._writer', 'requests', 'websockets', 'dataclasses'],
+    datas=[('config.py', '.'), ('phoenix_grid_template_v3.xlsx', '.')],
+    hiddenimports=['openpyxl', 'requests', 'pandas'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=['matplotlib', 'numpy', 'pandas', 'scipy', 'pytest', 'black', 'flake8'],
+    excludes=[],
     noarchive=False,
 )
 pyz = PYZ(a.pure)

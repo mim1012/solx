@@ -35,7 +35,14 @@
       "Bash(del kis_token_cache.json)",
       "Bash(tail:*)",
       "Bash(copy /Y \"dist\\PhoenixTrading.exe\" \"release\\PhoenixTrading.exe\")",
-      "Bash(npm install:*)"
+      "Bash(npm install:*)",
+      "Bash(copy test_pure_usd_balance.py release )",
+      "Bash(copy check_usd_balance.py release )",
+      "Bash(copy debug_usd_api_response.py release )",
+      "Bash(copy check_tradable_amount_api.py release )",
+      "Bash(copy find_deposit_api.py release )",
+      "Bash(copy test_exchange_code_meaning.py release)",
+      "Bash(cp:*)"
     ],
     "deny": [],
     "ask": []
