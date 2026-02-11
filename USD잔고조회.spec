@@ -2,7 +2,7 @@
 
 
 a = Analysis(
-    ['phoenix_main.py'],
+    ['release\\check_usd_balance.py'],
     pathex=[],
     binaries=[],
     datas=[],
@@ -21,7 +21,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='PhoenixTrading',
+    name='USD잔고조회',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

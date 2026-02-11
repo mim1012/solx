@@ -135,7 +135,7 @@ class PhoenixTradingSystem:
     def _is_market_open(self) -> tuple[bool, str]:
         """
         미국 주식 시장 개장 여부 확인 (한국 시간 기준, 서머타임 반영)
-        config.py의 MARKET_HOURS_EDT / MARKET_HOURS_EST 설정을 사용합니다.
+        Excel B22-B31 설정을 우선 사용하고, 없으면 config.py의 MARKET_HOURS_EDT/EST를 사용합니다.
 
         Returns:
             tuple[bool, str]: (개장 여부, 메시지)
@@ -146,18 +146,50 @@ class PhoenixTradingSystem:
         hour = now.hour
         minute = now.minute
 
-        # config.py에서 거래시간 설정 로드
+        # [v4.2] Excel 설정 우선, 없으면 config.py 사용
         if is_dst:
-            hours = config.MARKET_HOURS_EDT
             season = "서머타임(EDT)"
+            # Excel에서 EDT 설정을 읽었는지 확인
+            if (self.settings.edt_regular_open_hour is not None and
+                self.settings.edt_regular_open_minute is not None and
+                self.settings.edt_regular_close_hour is not None and
+                self.settings.edt_regular_close_minute is not None):
+                # Excel 설정 사용
+                open_hour = self.settings.edt_regular_open_hour
+                open_minute = self.settings.edt_regular_open_minute
+                close_hour = self.settings.edt_regular_close_hour
+                close_minute = self.settings.edt_regular_close_minute
+            else:
+                # config.py 기본값 사용
+                hours = config.MARKET_HOURS_EDT
+                open_hour, open_minute = hours["regular_open"]
+                close_hour, close_minute = hours["regular_close"]
         else:
-            hours = config.MARKET_HOURS_EST
             season = "표준시(EST)"
+            # Excel에서 EST 설정을 읽었는지 확인
+            if (self.settings.est_regular_open_hour is not None and
+                self.settings.est_regular_open_minute is not None and
+                self.settings.est_regular_close_hour is not None and
+                self.settings.est_regular_close_minute is not None):
+                # Excel 설정 사용
+                open_hour = self.settings.est_regular_open_hour
+                open_minute = self.settings.est_regular_open_minute
+                close_hour = self.settings.est_regular_close_hour
+                close_minute = self.settings.est_regular_close_minute
+            else:
+                # config.py 기본값 사용
+                hours = config.MARKET_HOURS_EST
+                open_hour, open_minute = hours["regular_open"]
+                close_hour, close_minute = hours["regular_close"]
 
-        open_hour, open_minute = hours["regular_open"]
-        close_hour, close_minute = hours["regular_close"]
-        premarket_start = hours["premarket_start"]
-        aftermarket_end = hours["aftermarket_end"]
+        # 프리마켓/애프터마켓 설정 (Excel 우선, 없으면 config.py)
+        # 프리마켓/애프터마켓 시간은 config.py에만 있음 (Excel에는 없으므로 config 사용)
+        if is_dst:
+            premarket_start = config.MARKET_HOURS_EDT["premarket_start"]
+            aftermarket_end = config.MARKET_HOURS_EDT["aftermarket_end"]
+        else:
+            premarket_start = config.MARKET_HOURS_EST["premarket_start"]
+            aftermarket_end = config.MARKET_HOURS_EST["aftermarket_end"]
 
         # 주말 체크 (미국 시간 기준)
         if weekday == 5 and (hour > close_hour or (hour == close_hour and minute > close_minute)):
@@ -192,8 +224,12 @@ class PhoenixTradingSystem:
         if is_open:
             return True, f"정규장 개장 중 ({season})"
 
+        # [v4.2] 프리마켓/애프터마켓 활성화 설정 (Excel 우선, 없으면 config.py)
+        enable_premarket = self.settings.enable_premarket if self.settings.enable_premarket is not None else config.ENABLE_PREMARKET
+        enable_aftermarket = self.settings.enable_aftermarket if self.settings.enable_aftermarket is not None else config.ENABLE_AFTERMARKET
+
         # 프리마켓 시간대
-        if config.ENABLE_PREMARKET:
+        if enable_premarket:
             in_premarket = (
                 (hour >= premarket_start and hour < open_hour) or
                 (hour == open_hour and minute < open_minute)
@@ -202,7 +238,7 @@ class PhoenixTradingSystem:
                 return True, f"프리마켓 시간 (주문 가능) - 정규장: {open_hour:02d}:{open_minute:02d} ({season})"
 
         # 애프터마켓 시간대
-        if config.ENABLE_AFTERMARKET:
+        if enable_aftermarket:
             in_aftermarket = (
                 (hour > close_hour or (hour == close_hour and minute > 0)) and
                 (hour < aftermarket_end or (hour == aftermarket_end and minute == 0))
@@ -316,21 +352,21 @@ class PhoenixTradingSystem:
 
             logger.info("[OK] KIS API 로그인 성공")
 
-            # 7. 초기 시세 조회 (장 마감 시 실패 허용)
+            # 7. 초기 시세 조회 (실시간 시세 또는 전일 종가)
             logger.info(f"{self.settings.ticker} 초기 시세 조회 중...")
             price_data = self.kis_adapter.get_overseas_price(self.settings.ticker)
 
             if not price_data:
-                logger.warning(f"{self.settings.ticker} 시세 조회 실패 (장 마감 가능성)")
-                logger.warning("  - 시장 개장 후 자동으로 시세를 조회합니다")
-                logger.warning("  - 임시로 current_price=0 설정")
-                current_price = 0.0
-            else:
-                current_price = price_data['price']
-                logger.info(f"  - 현재가: ${current_price:.2f}")
-                logger.info(f"  - 시가: ${price_data['open']:.2f}")
-                logger.info(f"  - 고가: ${price_data['high']:.2f}")
-                logger.info(f"  - 저가: ${price_data['low']:.2f}")
+                logger.error(f"{self.settings.ticker} 시세 조회 실패!")
+                logger.error("  - 실시간 시세 및 기간별 시세 모두 조회 실패")
+                logger.error("  - KIS API 상태를 확인하세요")
+                return InitStatus.ERROR_PRICE
+
+            current_price = price_data['price']
+            logger.info(f"  - 현재가(또는 전일 종가): ${current_price:.2f}")
+            logger.info(f"  - 시가: ${price_data['open']:.2f}")
+            logger.info(f"  - 고가: ${price_data['high']:.2f}")
+            logger.info(f"  - 저가: ${price_data['low']:.2f}")
 
             # 8. USD 예수금 조회 (매수가능금액조회 API)
             logger.info("USD 예수금 조회 중...")

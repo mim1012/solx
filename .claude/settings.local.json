@@ -42,7 +42,21 @@
       "Bash(copy check_tradable_amount_api.py release )",
       "Bash(copy find_deposit_api.py release )",
       "Bash(copy test_exchange_code_meaning.py release)",
-      "Bash(cp:*)"
+      "Bash(cp:*)",
+      "Bash(copy /Y \"dist\\USD잔고조회.exe\" \"release\\USD잔고조회.exe\")",
+      "Bash(del \"release\\USD잔고조회.exe\")",
+      "Bash(./USD잔고조회.exe)",
+      "Bash(git reset:*)",
+      "Bash(git rm:*)",
+      "Skill(xlsx)",
+      "Bash(cat:*)",
+      "Bash(timeout 30:*)",
+      "Bash(timeout 10 python:*)",
+      "Bash(timeout:*)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:wikidocs.net)",
+      "Bash(copy /Y phoenix_grid_template_v3.xlsx releasephoenix_grid_template_v3.xlsx)",
+      "Bash(git restore:*)"
     ],
     "deny": [],
     "ask": []

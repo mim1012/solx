@@ -40,6 +40,7 @@ class ExcelBridge:
         self.wb = None
         self.ws_master = None
         self.ws_history = None
+        self.ws_config = None  # [v4.2] 시스템설정 시트
 
     def load_workbook(self):
         """Excel 파일 열기"""
@@ -47,7 +48,14 @@ class ExcelBridge:
             self.wb = openpyxl.load_workbook(self.file_path)
             self.ws_master = self.wb["01_매매전략_기준설정"]
             self.ws_history = self.wb["02_운용로그_히스토리"]
-            logger.info(f"Excel 파일 로드 성공: {self.file_path}")
+
+            # [v4.2] 시스템설정 시트 (선택사항, 없으면 None)
+            if "03_시스템설정" in self.wb.sheetnames:
+                self.ws_config = self.wb["03_시스템설정"]
+                logger.info(f"Excel 파일 로드 성공 (시스템설정 시트 포함): {self.file_path}")
+            else:
+                self.ws_config = None
+                logger.info(f"Excel 파일 로드 성공 (시스템설정 시트 없음): {self.file_path}")
         except FileNotFoundError:
             raise FileNotFoundError(f"Excel 파일을 찾을 수 없음: {self.file_path}")
         except KeyError as e:
@@ -96,6 +104,7 @@ class ExcelBridge:
             self.wb = None
             self.ws_master = None
             self.ws_history = None
+            self.ws_config = None  # [v4.2] 시스템설정 시트
 
     def _read_bool(self, cell) -> bool:
         """
@@ -223,6 +232,54 @@ class ExcelBridge:
         price_check_interval = float(self.ws_master["B16"].value or 40.0)  # 시세 조회 주기 (초)
         excel_update_interval = float(self.ws_master["B21"].value or 1.0)
 
+        # [v4.2] 장시간 설정 (03_시스템설정 시트에서 읽기)
+        # None이면 config.py의 MARKET_HOURS_EDT/EST를 사용
+        edt_regular_open_hour = None
+        edt_regular_open_minute = None
+        edt_regular_close_hour = None
+        edt_regular_close_minute = None
+        est_regular_open_hour = None
+        est_regular_open_minute = None
+        est_regular_close_hour = None
+        est_regular_close_minute = None
+        enable_premarket = None
+        enable_aftermarket = None
+
+        # 03_시스템설정 시트가 있으면 설정 읽기
+        if self.ws_config is not None:
+            edt_regular_open_hour = self.ws_config["B8"].value
+            edt_regular_open_minute = self.ws_config["B9"].value
+            edt_regular_close_hour = self.ws_config["B10"].value
+            edt_regular_close_minute = self.ws_config["B11"].value
+            est_regular_open_hour = self.ws_config["B14"].value
+            est_regular_open_minute = self.ws_config["B15"].value
+            est_regular_close_hour = self.ws_config["B16"].value
+            est_regular_close_minute = self.ws_config["B17"].value
+            enable_premarket = self._read_bool(self.ws_config["B20"]) if self.ws_config["B20"].value is not None else None
+            enable_aftermarket = self._read_bool(self.ws_config["B21"]) if self.ws_config["B21"].value is not None else None
+
+            # 정수형 변환 (None이 아닌 경우에만)
+            if edt_regular_open_hour is not None:
+                edt_regular_open_hour = int(edt_regular_open_hour)
+            if edt_regular_open_minute is not None:
+                edt_regular_open_minute = int(edt_regular_open_minute)
+            if edt_regular_close_hour is not None:
+                edt_regular_close_hour = int(edt_regular_close_hour)
+            if edt_regular_close_minute is not None:
+                edt_regular_close_minute = int(edt_regular_close_minute)
+            if est_regular_open_hour is not None:
+                est_regular_open_hour = int(est_regular_open_hour)
+            if est_regular_open_minute is not None:
+                est_regular_open_minute = int(est_regular_open_minute)
+            if est_regular_close_hour is not None:
+                est_regular_close_hour = int(est_regular_close_hour)
+            if est_regular_close_minute is not None:
+                est_regular_close_minute = int(est_regular_close_minute)
+
+            logger.info(f"[v4.2] 시스템설정 시트에서 장시간 설정 로드 완료")
+        else:
+            logger.info(f"[v4.2] 시스템설정 시트 없음, config.py 기본값 사용")
+
         # [CUSTOM v3.1] Tier 1 매수% 읽기 (영역 C, 행 18, 컬럼 C)
         tier1_buy_percent = float(self.ws_master["C18"].value or 0.0)
 
@@ -259,7 +316,18 @@ class ExcelBridge:
             # 그리드 파라미터 추가
             seed_ratio=seed_ratio,
             buy_interval=buy_interval,
-            sell_target=sell_target
+            sell_target=sell_target,
+            # [v4.2] 장시간 설정 (Excel에서 읽음, None이면 config.py 사용)
+            edt_regular_open_hour=edt_regular_open_hour,
+            edt_regular_open_minute=edt_regular_open_minute,
+            edt_regular_close_hour=edt_regular_close_hour,
+            edt_regular_close_minute=edt_regular_close_minute,
+            est_regular_open_hour=est_regular_open_hour,
+            est_regular_open_minute=est_regular_open_minute,
+            est_regular_close_hour=est_regular_close_hour,
+            est_regular_close_minute=est_regular_close_minute,
+            enable_premarket=enable_premarket,
+            enable_aftermarket=enable_aftermarket
         )
 
         logger.info(f"설정 로드 완료: {ticker}, 투자금=${investment_usd:.2f}, "
