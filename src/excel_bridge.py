@@ -238,43 +238,48 @@ class ExcelBridge:
         edt_regular_open_minute = None
         edt_regular_close_hour = None
         edt_regular_close_minute = None
+        edt_premarket_start = None
+        edt_aftermarket_end = None
         est_regular_open_hour = None
         est_regular_open_minute = None
         est_regular_close_hour = None
         est_regular_close_minute = None
+        est_premarket_start = None
+        est_aftermarket_end = None
         enable_premarket = None
         enable_aftermarket = None
 
         # 03_시스템설정 시트가 있으면 설정 읽기
+        # 셀 매핑: B8-B13 (EDT), B16-B21 (EST), B24-B25 (옵션)
         if self.ws_config is not None:
             edt_regular_open_hour = self.ws_config["B8"].value
             edt_regular_open_minute = self.ws_config["B9"].value
             edt_regular_close_hour = self.ws_config["B10"].value
             edt_regular_close_minute = self.ws_config["B11"].value
-            est_regular_open_hour = self.ws_config["B14"].value
-            est_regular_open_minute = self.ws_config["B15"].value
-            est_regular_close_hour = self.ws_config["B16"].value
-            est_regular_close_minute = self.ws_config["B17"].value
-            enable_premarket = self._read_bool(self.ws_config["B20"]) if self.ws_config["B20"].value is not None else None
-            enable_aftermarket = self._read_bool(self.ws_config["B21"]) if self.ws_config["B21"].value is not None else None
+            edt_premarket_start = self.ws_config["B12"].value
+            edt_aftermarket_end = self.ws_config["B13"].value
+            est_regular_open_hour = self.ws_config["B16"].value
+            est_regular_open_minute = self.ws_config["B17"].value
+            est_regular_close_hour = self.ws_config["B18"].value
+            est_regular_close_minute = self.ws_config["B19"].value
+            est_premarket_start = self.ws_config["B20"].value
+            est_aftermarket_end = self.ws_config["B21"].value
+            enable_premarket = self._read_bool(self.ws_config["B24"]) if self.ws_config["B24"].value is not None else None
+            enable_aftermarket = self._read_bool(self.ws_config["B25"]) if self.ws_config["B25"].value is not None else None
 
             # 정수형 변환 (None이 아닌 경우에만)
-            if edt_regular_open_hour is not None:
-                edt_regular_open_hour = int(edt_regular_open_hour)
-            if edt_regular_open_minute is not None:
-                edt_regular_open_minute = int(edt_regular_open_minute)
-            if edt_regular_close_hour is not None:
-                edt_regular_close_hour = int(edt_regular_close_hour)
-            if edt_regular_close_minute is not None:
-                edt_regular_close_minute = int(edt_regular_close_minute)
-            if est_regular_open_hour is not None:
-                est_regular_open_hour = int(est_regular_open_hour)
-            if est_regular_open_minute is not None:
-                est_regular_open_minute = int(est_regular_open_minute)
-            if est_regular_close_hour is not None:
-                est_regular_close_hour = int(est_regular_close_hour)
-            if est_regular_close_minute is not None:
-                est_regular_close_minute = int(est_regular_close_minute)
+            edt_regular_open_hour = int(edt_regular_open_hour) if edt_regular_open_hour is not None else None
+            edt_regular_open_minute = int(edt_regular_open_minute) if edt_regular_open_minute is not None else None
+            edt_regular_close_hour = int(edt_regular_close_hour) if edt_regular_close_hour is not None else None
+            edt_regular_close_minute = int(edt_regular_close_minute) if edt_regular_close_minute is not None else None
+            edt_premarket_start = int(edt_premarket_start) if edt_premarket_start is not None else None
+            edt_aftermarket_end = int(edt_aftermarket_end) if edt_aftermarket_end is not None else None
+            est_regular_open_hour = int(est_regular_open_hour) if est_regular_open_hour is not None else None
+            est_regular_open_minute = int(est_regular_open_minute) if est_regular_open_minute is not None else None
+            est_regular_close_hour = int(est_regular_close_hour) if est_regular_close_hour is not None else None
+            est_regular_close_minute = int(est_regular_close_minute) if est_regular_close_minute is not None else None
+            est_premarket_start = int(est_premarket_start) if est_premarket_start is not None else None
+            est_aftermarket_end = int(est_aftermarket_end) if est_aftermarket_end is not None else None
 
             logger.info(f"[v4.2] 시스템설정 시트에서 장시간 설정 로드 완료")
         else:
@@ -322,10 +327,14 @@ class ExcelBridge:
             edt_regular_open_minute=edt_regular_open_minute,
             edt_regular_close_hour=edt_regular_close_hour,
             edt_regular_close_minute=edt_regular_close_minute,
+            edt_premarket_start=edt_premarket_start,
+            edt_aftermarket_end=edt_aftermarket_end,
             est_regular_open_hour=est_regular_open_hour,
             est_regular_open_minute=est_regular_open_minute,
             est_regular_close_hour=est_regular_close_hour,
             est_regular_close_minute=est_regular_close_minute,
+            est_premarket_start=est_premarket_start,
+            est_aftermarket_end=est_aftermarket_end,
             enable_premarket=enable_premarket,
             enable_aftermarket=enable_aftermarket
         )

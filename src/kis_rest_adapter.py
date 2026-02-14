@@ -620,7 +620,7 @@ class KisRestAdapter:
                 "OVRS_EXCG_CD": exchange_code,      # [FIX] 거래소코드 (자동 감지)
                 "PDNO": ticker,                      # 종목코드
                 "ORD_QTY": str(quantity),            # 주문수량
-                "OVRS_ORD_UNPR": str(price) if order_kind == "limit" else "0",  # 주문단가
+                "OVRS_ORD_UNPR": f"{price:.2f}" if order_kind == "limit" else "0",  # 주문단가 (소수점 2자리)
                 "ORD_SVR_DVSN_CD": "0",             # 주문서버구분코드
                 "ORD_DVSN": ord_dvsn                # 주문구분
             }
@@ -653,8 +653,9 @@ class KisRestAdapter:
                     order_no = output.get("ODNO", "")
 
                     # 체결 정보 추출 (KIS REST API 응답 필드)
-                    filled_price = float(output.get("AVG_PRVS", price or 0))  # 평균 체결가 (없으면 주문가 사용)
-                    filled_qty = int(output.get("TOT_CCLD_QTY", quantity))     # 총 체결 수량 (없으면 주문 수량 사용)
+                    # [FIX] 기본값 0: 주문 응답에 체결 정보가 없으면 미체결로 처리 (허위 체결 방지)
+                    filled_price = float(output.get("AVG_PRVS", 0))   # 평균 체결가 (없으면 0)
+                    filled_qty = int(output.get("TOT_CCLD_QTY", 0))   # 총 체결 수량 (없으면 0)
 
                     logger.info(
                         f"주문 성공: {order_type} {ticker} - "

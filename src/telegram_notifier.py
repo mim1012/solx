@@ -284,6 +284,59 @@ class TelegramNotifier:
 """
         self.send_message(message.strip())
 
+    def notify_balance_update(self, old_balance: float, new_balance: float):
+        """
+        잔고 변동 알림
+
+        Args:
+            old_balance: 이전 잔고
+            new_balance: 현재 잔고
+        """
+        change = new_balance - old_balance
+        change_emoji = "📈" if change > 0 else "📉"
+        message = f"""
+{change_emoji} *잔고 변동*
+
+💰 이전: `${old_balance:,.2f}`
+💰 현재: `${new_balance:,.2f}`
+💵 변동: `${change:+,.2f}`
+
+🕐 시각: `{datetime.now().strftime("%Y-%m-%d %H:%M:%S")}`
+"""
+        self.send_message(message.strip())
+
+    def notify_warning(self, message: str):
+        """
+        경고 알림
+
+        Args:
+            message: 경고 메시지
+        """
+        msg = f"""
+⚠️ *경고*
+
+{message}
+
+🕐 시각: `{datetime.now().strftime("%Y-%m-%d %H:%M:%S")}`
+"""
+        self.send_message(msg.strip())
+
+    def notify_emergency(self, message: str):
+        """
+        긴급 알림
+
+        Args:
+            message: 긴급 메시지
+        """
+        msg = f"""
+🚨 *긴급 알림*
+
+{message}
+
+🕐 시각: `{datetime.now().strftime("%Y-%m-%d %H:%M:%S")}`
+"""
+        self.send_message(msg.strip())
+
     @staticmethod
     def from_settings(settings: GridSettings) -> 'TelegramNotifier':
         """

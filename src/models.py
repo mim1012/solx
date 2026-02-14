@@ -100,18 +100,22 @@ class GridSettings:
     fill_check_max_retries: int = 10        # 체결 확인 최대 재시도 (기본: 10회)
     fill_check_interval: float = 2.0        # 체결 확인 간격 (초, 기본: 2초)
 
-    # [v4.2] 장시간 설정 (한국 시간 기준, Excel B22-B31에서 읽음)
+    # [v4.2] 장시간 설정 (한국 시간 기준, Excel 03_시스템설정 시트에서 읽음)
     # None이면 config.py의 MARKET_HOURS_EDT/EST 사용
-    edt_regular_open_hour: Optional[int] = None     # EDT 정규장 개장 시
-    edt_regular_open_minute: Optional[int] = None   # EDT 정규장 개장 분
-    edt_regular_close_hour: Optional[int] = None    # EDT 정규장 마감 시
-    edt_regular_close_minute: Optional[int] = None  # EDT 정규장 마감 분
-    est_regular_open_hour: Optional[int] = None     # EST 정규장 개장 시
-    est_regular_open_minute: Optional[int] = None   # EST 정규장 개장 분
-    est_regular_close_hour: Optional[int] = None    # EST 정규장 마감 시
-    est_regular_close_minute: Optional[int] = None  # EST 정규장 마감 분
-    enable_premarket: Optional[bool] = None         # 프리마켓 거래 허용
-    enable_aftermarket: Optional[bool] = None       # 애프터마켓 거래 허용
+    edt_regular_open_hour: Optional[int] = None     # B8:  EDT 정규장 개장 시
+    edt_regular_open_minute: Optional[int] = None   # B9:  EDT 정규장 개장 분
+    edt_regular_close_hour: Optional[int] = None    # B10: EDT 정규장 마감 시
+    edt_regular_close_minute: Optional[int] = None  # B11: EDT 정규장 마감 분
+    edt_premarket_start: Optional[int] = None       # B12: EDT 프리마켓 시작 시
+    edt_aftermarket_end: Optional[int] = None       # B13: EDT 애프터마켓 종료 시
+    est_regular_open_hour: Optional[int] = None     # B16: EST 정규장 개장 시
+    est_regular_open_minute: Optional[int] = None   # B17: EST 정규장 개장 분
+    est_regular_close_hour: Optional[int] = None    # B18: EST 정규장 마감 시
+    est_regular_close_minute: Optional[int] = None  # B19: EST 정규장 마감 분
+    est_premarket_start: Optional[int] = None       # B20: EST 프리마켓 시작 시
+    est_aftermarket_end: Optional[int] = None       # B21: EST 애프터마켓 종료 시
+    enable_premarket: Optional[bool] = None         # B24: 프리마켓 거래 허용
+    enable_aftermarket: Optional[bool] = None       # B25: 애프터마켓 거래 허용
 
     # 그리드 파라미터 (계산값)
     seed_ratio: float = 0.05     # 시드 비율 (5%)

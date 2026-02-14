@@ -182,14 +182,13 @@ class PhoenixTradingSystem:
                 open_hour, open_minute = hours["regular_open"]
                 close_hour, close_minute = hours["regular_close"]
 
-        # 프리마켓/애프터마켓 설정 (Excel 우선, 없으면 config.py)
-        # 프리마켓/애프터마켓 시간은 config.py에만 있음 (Excel에는 없으므로 config 사용)
+        # 프리마켓/애프터마켓 시간 설정 (Excel 우선, 없으면 config.py)
         if is_dst:
-            premarket_start = config.MARKET_HOURS_EDT["premarket_start"]
-            aftermarket_end = config.MARKET_HOURS_EDT["aftermarket_end"]
+            premarket_start = self.settings.edt_premarket_start if self.settings.edt_premarket_start is not None else config.MARKET_HOURS_EDT["premarket_start"]
+            aftermarket_end = self.settings.edt_aftermarket_end if self.settings.edt_aftermarket_end is not None else config.MARKET_HOURS_EDT["aftermarket_end"]
         else:
-            premarket_start = config.MARKET_HOURS_EST["premarket_start"]
-            aftermarket_end = config.MARKET_HOURS_EST["aftermarket_end"]
+            premarket_start = self.settings.est_premarket_start if self.settings.est_premarket_start is not None else config.MARKET_HOURS_EST["premarket_start"]
+            aftermarket_end = self.settings.est_aftermarket_end if self.settings.est_aftermarket_end is not None else config.MARKET_HOURS_EST["aftermarket_end"]
 
         # 주말 체크 (미국 시간 기준)
         if weekday == 5 and (hour > close_hour or (hour == close_hour and minute > close_minute)):
@@ -640,6 +639,18 @@ class PhoenixTradingSystem:
                     if self.settings.fill_check_enabled:
                         filled_price, filled_qty = self._wait_for_fill(order_id, signal.quantity)
 
+                        # [FIX] _wait_for_fill 타임아웃 시 주문 응답의 체결 정보를 fallback으로 사용
+                        if filled_qty == 0:
+                            order_filled_qty = result.get("filled_qty", 0)
+                            order_filled_price = result.get("filled_price", 0)
+                            if order_filled_qty > 0:
+                                logger.warning(
+                                    f"[FALLBACK] 체결확인 타임아웃, 주문응답 체결정보 사용: "
+                                    f"{order_filled_qty}주 @ ${order_filled_price:.2f}"
+                                )
+                                filled_qty = order_filled_qty
+                                filled_price = order_filled_price
+
                         if filled_qty > 0:
                             # 체결 완료 → GridEngine 상태 업데이트
                             position = self.grid_engine.execute_buy(
@@ -707,6 +718,18 @@ class PhoenixTradingSystem:
                     # 체결 확인 (설정에 따라)
                     if self.settings.fill_check_enabled:
                         filled_price, filled_qty = self._wait_for_fill(order_id, signal.quantity)
+
+                        # [FIX] _wait_for_fill 타임아웃 시 주문 응답의 체결 정보를 fallback으로 사용
+                        if filled_qty == 0:
+                            order_filled_qty = result.get("filled_qty", 0)
+                            order_filled_price = result.get("filled_price", 0)
+                            if order_filled_qty > 0:
+                                logger.warning(
+                                    f"[FALLBACK] 체결확인 타임아웃, 주문응답 체결정보 사용: "
+                                    f"{order_filled_qty}주 @ ${order_filled_price:.2f}"
+                                )
+                                filled_qty = order_filled_qty
+                                filled_price = order_filled_price
 
                         if filled_qty > 0:
                             # 체결 완료 → GridEngine 상태 업데이트
@@ -785,13 +808,25 @@ class PhoenixTradingSystem:
                 f"체결 {filled_qty}/{expected_qty}주 @ ${filled_price:.2f}"
             )
 
-            if filled_qty > 0:
-                # 체결 완료 또는 부분 체결
+            if filled_qty >= expected_qty:
+                # 전량 체결 완료
                 logger.info(
-                    f"[FILL] 체결 확인: {filled_qty}주 @ ${filled_price:.2f} "
+                    f"[FILL] 전량 체결 확인: {filled_qty}/{expected_qty}주 @ ${filled_price:.2f} "
                     f"(상태: {status})"
                 )
                 return filled_price, filled_qty
+            elif filled_qty > 0:
+                # 부분 체결 → 대기 계속 (마지막 시도면 부분 체결분 리턴)
+                logger.info(
+                    f"[FILL] 부분 체결: {filled_qty}/{expected_qty}주 @ ${filled_price:.2f} "
+                    f"(상태: {status}, 재시도 {attempt}/{max_retries})"
+                )
+                if attempt == max_retries:
+                    logger.warning(
+                        f"[PARTIAL] 부분 체결로 처리: {filled_qty}/{expected_qty}주 @ ${filled_price:.2f}"
+                    )
+                    return filled_price, filled_qty
+                continue
             elif status == "거부":
                 # 주문 거부
                 reject_reason = fill_status["reject_reason"]

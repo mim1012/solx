@@ -528,7 +528,7 @@ class TestKisRestAdapter:
         assert result["status"] == "SUCCESS"
         assert result["order_id"] == "ORDER999999"
         assert result["message"] == "주문 접수 완료"
-        assert result["filled_qty"] == 20  # 주문 수량과 동일 (응답에 TOT_CCLD_QTY 없으면 quantity 사용)
+        assert result["filled_qty"] == 0  # [FIX] 응답에 TOT_CCLD_QTY 없으면 0 (허위 체결 방지)
 
     def test_account_list_property(self, adapter):
         """account_list 속성 테스트"""

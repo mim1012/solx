@@ -5,13 +5,14 @@ a = Analysis(
     ['phoenix_main.py'],
     pathex=[],
     binaries=[],
-    datas=[],
-    hiddenimports=[],
+    datas=[('src', 'src')],
+    hiddenimports=['openpyxl', 'openpyxl.cell._writer', 'requests', 'websockets', 'dataclasses'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=['matplotlib', 'numpy', 'pandas', 'scipy', 'pytest', 'black', 'flake8'],
     noarchive=False,
+    optimize=0,
 )
 pyz = PYZ(a.pure)
 

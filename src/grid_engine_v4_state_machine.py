@@ -43,7 +43,7 @@ class GridEngineV4:
     """
 
     # 안전 설정
-    MAX_BATCH_ORDERS = 3      # Gap 발생 시 최대 배치 주문 개수
+    MAX_BATCH_ORDERS = 10     # Gap 발생 시 최대 배치 주문 개수
     MAX_ORDER_QUANTITY = 10000  # 주문 수량 상한선
     MIN_PRICE = 0.01          # 최소 유효 가격
 
