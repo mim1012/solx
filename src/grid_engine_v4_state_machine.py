@@ -91,11 +91,12 @@ class GridEngineV4:
             existing = self.state_machine.get_tier(tier)
             if existing and existing.state == TierState.FILLED and existing.quantity > 0:
                 # 가격만 업데이트하고 상태/포지션 정보는 보존
+                # [FIX] sell_price는 보존 (매도 목표가가 변하면 매도 불가)
                 with self.state_machine._lock:
                     real_tier = self.state_machine._tiers.get(tier)
                     if real_tier:
                         real_tier.buy_price = buy_price
-                        real_tier.sell_price = sell_price
+                        # sell_price는 의도적으로 갱신하지 않음
                 preserved += 1
             else:
                 self.state_machine.initialize_tier(tier, buy_price, sell_price)
@@ -511,6 +512,12 @@ class GridEngineV4:
         if not self.settings.tier1_auto_update:
             return False, None
 
+        # [FIX] 보유 중일 때는 갱신 안함 (매도가가 계속 올라가는 버그 방지)
+        # grid_engine.py의 원본 로직 복원: 포지션 보유 시 tier1 고정
+        filled_tiers = self.state_machine.get_filled_tiers()
+        if filled_tiers:
+            return False, None
+
         if current_price > self.tier1_price:
             old_tier1 = self.tier1_price
             self.tier1_price = current_price
@@ -536,7 +543,9 @@ class GridEngineV4:
                 if tier_info:
                     # 가격만 갱신, 상태/주문정보는 보존
                     tier_info.buy_price = buy_price
-                    tier_info.sell_price = sell_price
+                    # [FIX] FILLED 티어의 매도가는 보존 (매도 불가 버그 방지)
+                    if tier_info.state != TierState.FILLED:
+                        tier_info.sell_price = sell_price
                 else:
                     # 새 티어면 초기화
                     self.state_machine.initialize_tier(tier, buy_price, sell_price)
@@ -559,6 +568,102 @@ class GridEngineV4:
                 'ERROR': len(self.state_machine.get_tiers_by_state(TierState.ERROR)),
             }
         }
+
+    # ============================================
+    # [v4.2] 상태 저장/복원 (State Persistence)
+    # ============================================
+
+    def export_state(self) -> dict:
+        """
+        현재 상태를 dict로 내보내기 (JSON 저장용)
+
+        Returns:
+            dict: tier1_price, filled_tiers 등 저장할 상태
+        """
+        filled_tiers = self.state_machine.get_filled_tiers()
+        filled_data = []
+        for t in filled_tiers:
+            filled_data.append({
+                "tier_id": t.tier_id,
+                "sell_price": t.sell_price,
+                "quantity": t.quantity,
+                "avg_price": t.avg_price,
+                "invested_amount": t.invested_amount,
+                "opened_at": t.opened_at.strftime("%Y-%m-%dT%H:%M:%S") if t.opened_at else None,
+            })
+
+        return {
+            "ticker": self.settings.ticker,
+            "tier1_price": self.tier1_price,
+            "account_balance": self.state_machine.account_balance,
+            "total_tiers": self.settings.total_tiers,
+            "filled_tiers": filled_data,
+        }
+
+    def import_state(self, data: dict):
+        """
+        저장된 상태에서 복원 (시스템 재시작 시)
+
+        중요:
+        - fill_tier() 호출 금지 (잔고 이중 차감 방지)
+        - sell_price는 저장된 값 그대로 복원 (재계산 방지)
+        - account_balance는 외부(KIS API)에서 별도 설정
+
+        Args:
+            data: load_state()에서 반환된 상태 딕셔너리
+        """
+        # 1. tier1_price 복원
+        old_tier1 = self.tier1_price
+        self.tier1_price = data["tier1_price"]
+        logger.info(f"[STATE RESTORE] tier1_price 복원: ${old_tier1:.2f} → ${self.tier1_price:.2f}")
+
+        # 2. 상태 머신 재초기화 (tier1_price 기반으로 모든 Tier 가격 재계산)
+        self._init_state_machine()
+
+        # 3. FILLED 티어 복원 (직접 필드 설정, fill_tier 호출 금지)
+        filled_tiers = data.get("filled_tiers", [])
+        restored_count = 0
+
+        for tier_data in filled_tiers:
+            tier_id = tier_data["tier_id"]
+
+            with self.state_machine._lock:
+                real_tier = self.state_machine._tiers.get(tier_id)
+                if not real_tier:
+                    logger.warning(f"[STATE RESTORE] Tier {tier_id} 없음, 건너뜀")
+                    continue
+
+                # 상태를 FILLED로 직접 설정
+                real_tier.state = TierState.FILLED
+
+                # 포지션 정보 복원
+                real_tier.quantity = tier_data["quantity"]
+                real_tier.avg_price = tier_data["avg_price"]
+                real_tier.invested_amount = tier_data["invested_amount"]
+
+                # sell_price는 저장된 값 그대로 복원 (재계산 방지)
+                real_tier.sell_price = tier_data["sell_price"]
+
+                # opened_at 복원
+                opened_at_str = tier_data.get("opened_at")
+                if opened_at_str:
+                    try:
+                        real_tier.opened_at = datetime.strptime(opened_at_str, "%Y-%m-%dT%H:%M:%S")
+                    except (ValueError, TypeError):
+                        real_tier.opened_at = datetime.now()
+                else:
+                    real_tier.opened_at = datetime.now()
+
+                real_tier.last_updated = datetime.now()
+                restored_count += 1
+
+                logger.info(
+                    f"[STATE RESTORE] Tier {tier_id} 복원: "
+                    f"{real_tier.quantity}주 @ ${real_tier.avg_price:.2f}, "
+                    f"매도가=${real_tier.sell_price:.2f}"
+                )
+
+        logger.info(f"[STATE RESTORE] 완료: {restored_count}개 Tier 복원")
 
     # ============================================
     # [v4.1] 하위 호환성 프로퍼티

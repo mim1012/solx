@@ -1,23 +1,43 @@
 ================================================================
-Phoenix Trading System v3.1 (CUSTOM)
-SOXL 자동매매 시스템 with Tier 1 거래 기능
+Phoenix Trading System v4.1 (ENHANCED)
+SOXL 자동매매 시스템 with 미국 시장 설정 & 잔고 동기화
 ================================================================
 
 📋 설치 방법:
 
-1. 키움 OpenAPI+ 설치 (필수!)
-   https://www.kiwoom.com/h/customer/download/VOpenApiInfoView
+1. 환경 설정 파일 생성 (.env)
+   - .env.example 파일을 .env로 복사
+   - 텍스트 편집기로 .env 파일 열기
+   - 다음 항목을 실제 값으로 수정:
 
-   - 위 링크에서 "OpenAPI+ 다운로드" 클릭
-   - 관리자 권한으로 설치
-   - 설치 완료 후 컴퓨터 재시작 권장
+     # 한국투자증권(KIS) REST API 자격증명 (필수)
+     KIS_APP_KEY=your_app_key_here
+     KIS_APP_SECRET=your_app_secret_here
+     KIS_ACCOUNT_NO=your_account_number_here
+     KIS_API_MODE=REAL  # REAL: 실전거래, PAPER: 모의투자
+
+     # 미국 시장 설정 (선택, 기본값: SOXL/AMS/USD)
+     US_MARKET_TICKER=SOXL
+     US_MARKET_EXCHANGE=AMS  # SOXL: AMS, 일반 종목: NAS, NYS
+     US_MARKET_CURRENCY=USD
+
+     # 텔레그램 알림 (선택)
+     TELEGRAM_BOT_TOKEN=1234567890:ABCdefGHIjklMNOpqrsTUVwxyz
+     TELEGRAM_CHAT_ID=123456789
+
+     # 시스템 설정 (선택)
+     LOG_LEVEL=INFO
+     DEBUG_MODE=false
+     BALANCE_SYNC_INTERVAL=60  # 잔고 동기화 간격 (초)
+
+   - 저장 (Ctrl + S)
 
 2. Excel 템플릿 설정
    - phoenix_grid_template_v3.xlsx 파일 열기
    - 시트 1 "01_매매전략_기준설정" 에서 다음 항목 입력:
 
      [기본 설정]
-     - 계좌번호: 키움증권 계좌번호 (예: 1234567890)
+     - 계좌번호: 한국투자증권 계좌번호 (예: 12345678-01)
      - 종목코드: SOXL (변경 금지)
      - 투자금 (USD): 총 투자 금액 (예: 10000)
      - 1티어 금액 (USD): 티어당 투자 금액 (예: 500)
@@ -81,18 +101,27 @@ logs\                           ← 로그 폴더 (자동 생성)
 문제 1: "Excel 템플릿을 찾을 수 없습니다"
 해결: phoenix_grid_template_v3.xlsx 파일을 PhoenixTrading.exe와 같은 폴더에 배치
 
-문제 2: "키움 OpenAPI를 불러올 수 없습니다"
-해결: 키움 OpenAPI+ 설치 (위 링크 참조)
+문제 2: "KIS API 로그인 실패"
+해결: 
+  1. .env 파일에 KIS_APP_KEY, KIS_APP_SECRET, KIS_ACCOUNT_NO 확인
+  2. KIS 개발자센터(https://apiportal.koreainvestment.com/)에서 앱키 권한 확인
+  3. 계좌번호 형식 확인 (예: 12345678-01)
 
-문제 3: "VCRUNTIME140.dll이 없습니다"
+문제 3: "잔고 부족으로 배치 매수 중단: 필요=$539.12, 잔고=$0.00"
+해결: 
+  1. test_kis_fix.py 실행하여 예수금 조회 테스트
+  2. .env 파일에서 US_MARKET_EXCHANGE=AMS 확인
+  3. 증권사 앱에서 USD 잔고 확인 및 입금
+
+문제 4: "VCRUNTIME140.dll이 없습니다"
 해결: Visual C++ 재배포 패키지 설치
       https://aka.ms/vs/17/release/vc_redist.x86.exe
 
-문제 4: "Python을 찾을 수 없습니다"
-해결: Python 설치 불필요. 개발자에게 문의하세요.
-
 문제 5: 로그인 후 아무 반응이 없음
-해결: logs 폴더의 최신 로그 파일 확인
+해결: 
+  1. logs 폴더의 최신 로그 파일 확인
+  2. test_config.py 실행하여 설정 검증
+  3. test_kis_fix.py 실행하여 API 연결 테스트
 
 ================================================================
 
@@ -135,7 +164,7 @@ logs\                           ← 로그 폴더 (자동 생성)
 
 📚 추가 정보:
 
-- Tier 1 거래 기능 (CUSTOM v3.1)
+- Tier 1 거래 기능 (CUSTOM v4.1)
   "1티어 거래 여부"를 TRUE로 설정하면 Tier 1에서도 매수/매도 가능
 
 - 240단계 그리드 시스템
@@ -147,10 +176,25 @@ logs\                           ← 로그 폴더 (자동 생성)
 - High Water Mark (Tier 1)
   보유 주식이 없을 때 최고가 자동 추적
 
+- 미국 시장 설정 지원
+  환경 변수로 종목, 거래소, 통화 설정 가능
+
+- 자동 잔고 동기화
+  주기적으로 KIS API에서 잔고 조회 및 상태 동기화
+
+- 예수금 조회 문제 해결
+  SOXL 거래소(AMS) 자동 감지 및 설정
+
 ================================================================
 
-버전: v3.1 (CUSTOM)
-릴리즈: 2025-01-14
+버전: v4.1 (ENHANCED)
+릴리즈: 2026-02-04
+주요 개선사항:
+✅ 미국 시장 설정 지원 (환경 변수 기반)
+✅ 예수금 조회 문제 해결 (SOXL → AMS 거래소 자동 감지)
+✅ 자동 잔고 동기화 기능 추가
+✅ KIS REST API 호환성 개선
+✅ 상세 디버그 로그 강화
 
 ⚠️ 투자 책임은 사용자에게 있습니다.
 ⚠️ 손실 가능성을 충분히 인지하고 사용하세요.

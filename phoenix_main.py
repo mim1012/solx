@@ -10,6 +10,12 @@ import time
 import signal
 import logging
 from enum import Enum
+
+# Windows 콘솔 한글 깨짐 방지 (EXE 실행 시)
+if sys.platform == "win32":
+    os.system("chcp 65001 >nul 2>&1")
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 from pathlib import Path
 from datetime import datetime, timedelta
 
@@ -27,6 +33,7 @@ from src.excel_bridge import ExcelBridge
 from src.grid_engine_v4_state_machine import GridEngineV4 as GridEngine
 from src.kis_rest_adapter import KisRestAdapter
 from src.telegram_notifier import TelegramNotifier
+from src.state_persistence import StatePersistence
 from src.models import GridSettings, SystemState
 import config
 
@@ -90,6 +97,7 @@ class PhoenixTradingSystem:
         self.kis_adapter = None
         self.telegram = None
         self.settings = None
+        self.state_persistence = StatePersistence()
 
         # 통계
         self.daily_buy_count = 0
@@ -396,8 +404,31 @@ class PhoenixTradingSystem:
             logger.info("보유 주식 조회 중...")
             self.kis_adapter.get_balance()
 
-            # 10. GridEngine 초기값 설정
-            self.grid_engine.tier1_price = current_price
+            # 10. GridEngine 초기값 설정 (상태 복원 우선)
+            saved_state = self.state_persistence.load_state(
+                ticker=self.settings.ticker,
+                version=config.VERSION
+            )
+            if saved_state:
+                self.grid_engine.import_state(saved_state)  # tier1 + 포지션 복원
+                # [HWM] 신고가 보장: 저장된 tier1과 현재가 중 높은 값 사용
+                if current_price > self.grid_engine.tier1_price:
+                    old_tier1 = self.grid_engine.tier1_price
+                    self.grid_engine.tier1_price = current_price
+                    self.grid_engine._update_tier_prices()
+                    logger.info(
+                        f"[HWM] 현재가가 저장된 tier1보다 높아 갱신: "
+                        f"${old_tier1:.2f} → ${current_price:.2f}"
+                    )
+                logger.info(
+                    f"[STATE] 이전 상태 복원 완료: "
+                    f"tier1=${self.grid_engine.tier1_price:.2f}, "
+                    f"포지션={len(saved_state.get('filled_tiers', []))}개"
+                )
+            else:
+                self.grid_engine.tier1_price = current_price  # 첫 실행: 현재가로 설정
+
+            # 잔고는 항상 KIS API 실시간 값 사용
             self.grid_engine.account_balance = balance
             self.grid_engine.current_price = current_price
 
@@ -564,7 +595,16 @@ class PhoenixTradingSystem:
                     break
 
                 # 3. 매매 신호 확인
+                tier1_before = self.grid_engine.tier1_price
                 signals = self.grid_engine.process_tick(current_price)
+
+                # 3.5 [HWM] Tier 1 신고가 갱신 시 즉시 상태 저장
+                if self.grid_engine.tier1_price != tier1_before:
+                    logger.info(
+                        f"[HWM] Tier 1 신고가 갱신 감지, 상태 저장: "
+                        f"${tier1_before:.2f} → ${self.grid_engine.tier1_price:.2f}"
+                    )
+                    self._save_trading_state()
 
                 # 4. 매매 신호 처리
                 for signal in signals:
@@ -590,6 +630,16 @@ class PhoenixTradingSystem:
 
         # 정상 종료
         return 0
+
+    def _save_trading_state(self):
+        """거래 상태를 JSON 파일에 저장 (실패해도 트레이딩 루프 중단 안 함)"""
+        try:
+            if self.grid_engine:
+                state_data = self.grid_engine.export_state()
+                state_data["version"] = config.VERSION
+                self.state_persistence.save_state(state_data)
+        except Exception as e:
+            logger.error(f"거래 상태 저장 실패 (트레이딩 계속): {e}")
 
     def _process_signal(self, signal):
         """매매 신호 처리 (배치 주문 지원)"""
@@ -660,6 +710,9 @@ class PhoenixTradingSystem:
                                 if self.telegram:
                                     is_tier1 = signal.tier == 1 and self.settings.tier1_trading_enabled
                                     self.telegram.notify_buy_executed(signal, is_tier1)
+
+                                # 매수 체결 후 상태 저장
+                                self._save_trading_state()
                         else:
                             logger.error(f"[FAIL] 매수 체결 실패: Tier {signal.tier}, 주문번호 {order_id} (체결 수량 0)")
                     else:
@@ -727,6 +780,9 @@ class PhoenixTradingSystem:
 
                             if self.telegram:
                                 self.telegram.notify_sell_executed(signal, profit, profit_rate)
+
+                            # 매도 체결 후 상태 저장
+                            self._save_trading_state()
                         else:
                             logger.error(f"[FAIL] 매도 체결 실패: Tier {signal.tier}, 주문번호 {order_id} (체결 수량 0)")
                     else:
@@ -892,7 +948,10 @@ class PhoenixTradingSystem:
         self.is_running = False
 
         try:
-            # 최종 상태 저장
+            # 최종 거래 상태 저장 (JSON)
+            self._save_trading_state()
+
+            # 최종 상태 저장 (Excel)
             if self.grid_engine and self.excel_bridge:
                 final_state = self.grid_engine.get_system_state(self.grid_engine.current_price)
 
