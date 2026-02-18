@@ -13,9 +13,14 @@ from enum import Enum
 
 # Windows 콘솔 한글 깨짐 방지 (EXE 실행 시)
 if sys.platform == "win32":
-    os.system("chcp 65001 >nul 2>&1")
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    try:
+        os.system("chcp 65001 >nul 2>&1")
+        if sys.stdout and hasattr(sys.stdout, 'reconfigure'):
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        if sys.stderr and hasattr(sys.stderr, 'reconfigure'):
+            sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass  # 콘솔 설정 실패해도 계속 진행
 from pathlib import Path
 from datetime import datetime, timedelta
 
@@ -29,13 +34,17 @@ else:
 
 sys.path.insert(0, str(BASE_DIR))
 
-from src.excel_bridge import ExcelBridge
-from src.grid_engine_v4_state_machine import GridEngineV4 as GridEngine
-from src.kis_rest_adapter import KisRestAdapter
-from src.telegram_notifier import TelegramNotifier
-from src.state_persistence import StatePersistence
-from src.models import GridSettings, SystemState
-import config
+_IMPORT_ERROR = None
+try:
+    from src.excel_bridge import ExcelBridge
+    from src.grid_engine_v4_state_machine import GridEngineV4 as GridEngine
+    from src.kis_rest_adapter import KisRestAdapter
+    from src.telegram_notifier import TelegramNotifier
+    from src.state_persistence import StatePersistence
+    from src.models import GridSettings, SystemState
+    import config
+except Exception as _e:
+    _IMPORT_ERROR = _e
 
 
 class InitStatus(Enum):
@@ -74,7 +83,10 @@ def setup_logging():
     return logging.getLogger(__name__)
 
 
-logger = setup_logging()
+try:
+    logger = setup_logging()
+except Exception:
+    logger = logging.getLogger(__name__)
 
 
 class PhoenixTradingSystem:
@@ -1047,4 +1059,25 @@ def main():
 
 
 if __name__ == "__main__":
+    if _IMPORT_ERROR:
+        import traceback
+        print("\n" + "=" * 60)
+        print("[치명적 에러] 모듈 로딩 실패!")
+        print("=" * 60)
+        print(f"에러 타입: {type(_IMPORT_ERROR).__name__}")
+        print(f"에러 메시지: {_IMPORT_ERROR}")
+        print("")
+        traceback.print_exc()
+        print("=" * 60)
+        print("")
+        try:
+            input("Press Enter to exit...")
+        except (EOFError, OSError):
+            try:
+                import msvcrt
+                print("Press any key to exit...")
+                msvcrt.getch()
+            except Exception:
+                time.sleep(30)
+        sys.exit(1)
     main()
